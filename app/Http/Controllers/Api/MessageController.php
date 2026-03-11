@@ -13,6 +13,7 @@ class MessageController extends Controller
     {
         $request->validate([
             'user_id' => ['required', 'exists:users,id'],
+            'after_id' => ['nullable', 'integer'],
         ]);
 
         $messages = Message::query()
@@ -24,10 +25,30 @@ class MessageController extends Controller
                 $query->where('sender_id', $request->integer('user_id'))
                     ->where('receiver_id', $request->user()->id);
             })
-            ->orderBy('id')
-            ->paginate(50);
+            ->when($request->filled('after_id'), fn ($q) => $q->where('id', '>', $request->integer('after_id')))
+            ->orderBy('id');
 
-        return response()->json($messages);
+        if ($request->filled('after_id')) {
+            $rows = $messages->get();
+
+            Message::query()
+                ->where('receiver_id', $request->user()->id)
+                ->where('sender_id', $request->integer('user_id'))
+                ->where('seen', false)
+                ->update(['seen' => true]);
+
+            return response()->json($rows);
+        }
+
+        $paginated = $messages->paginate(50);
+
+        Message::query()
+            ->where('receiver_id', $request->user()->id)
+            ->where('sender_id', $request->integer('user_id'))
+            ->where('seen', false)
+            ->update(['seen' => true]);
+
+        return response()->json($paginated);
     }
 
     public function send(Request $request): JsonResponse

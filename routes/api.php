@@ -3,8 +3,19 @@
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BloodDonorController;
+use App\Http\Controllers\Api\BloodRequestController;
 use App\Http\Controllers\Api\BookingController;
 use App\Http\Controllers\Api\BusinessController;
+use App\Http\Controllers\Api\CourierController;
+use App\Http\Controllers\Api\CarRentalBookingController;
+use App\Http\Controllers\Api\CarRentalController;
+use App\Http\Controllers\Api\DoctorAppointmentController;
+use App\Http\Controllers\Api\DoctorController;
+use App\Http\Controllers\Api\ElectricityOfficeController;
+use App\Http\Controllers\Api\HospitalController;
+use App\Http\Controllers\Api\StudentRequestController;
+use App\Http\Controllers\Api\TeacherController;
+use App\Http\Controllers\Api\TeacherRequestController;
 use App\Http\Controllers\Api\EmergencyController;
 use App\Http\Controllers\Api\JobController;
 use App\Http\Controllers\Api\MarketplaceController;
@@ -52,25 +63,53 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/business/add', [BusinessController::class, 'store']);
     Route::post('/reviews/business', [ReviewController::class, 'rateBusiness']);
     Route::get('/reviews/business/{id}', [ReviewController::class, 'businessReviews']);
+    Route::post('/reviews/hospital', [ReviewController::class, 'rateHospital']);
+    Route::get('/reviews/hospital/{id}', [ReviewController::class, 'hospitalReviews']);
+    Route::post('/reviews/car-rental', [ReviewController::class, 'rateCarRental']);
+    Route::get('/reviews/car-rental/{id}', [ReviewController::class, 'carRentalReviews']);
+    Route::post('/reviews/courier', [ReviewController::class, 'rateCourier']);
+    Route::get('/reviews/courier/{id}', [ReviewController::class, 'courierReviews']);
+    Route::post('/reviews/teacher', [ReviewController::class, 'rateTeacher']);
+    Route::get('/reviews/teacher/{id}', [ReviewController::class, 'teacherReviews']);
 
     Route::get('/items', [MarketplaceController::class, 'index']);
+    Route::get('/items/{id}', [MarketplaceController::class, 'show'])->whereNumber('id');
     Route::post('/items/add', [MarketplaceController::class, 'store']);
     Route::post('/items/update', [MarketplaceController::class, 'update']);
     Route::delete('/items/delete', [MarketplaceController::class, 'destroy']);
     Route::get('/items/category', [MarketplaceController::class, 'categories']);
+    Route::get('/items/seller/{id}', [MarketplaceController::class, 'seller'])->whereNumber('id');
+    Route::post('/items/report', [MarketplaceController::class, 'report']);
 
     Route::get('/messages', [MessageController::class, 'index']);
     Route::post('/send-message', [MessageController::class, 'send']);
 
     Route::get('/blood-donors', [BloodDonorController::class, 'index']);
+    Route::get('/blood-donors/{id}', [BloodDonorController::class, 'show'])->whereNumber('id');
     Route::post('/blood-donor/register', [BloodDonorController::class, 'register']);
+    Route::get('/blood-requests', [BloodRequestController::class, 'index']);
+    Route::get('/blood-requests/{id}', [BloodRequestController::class, 'show'])->whereNumber('id');
+    Route::post('/blood-requests', [BloodRequestController::class, 'store']);
+    Route::post('/blood-requests/{id}/close', [BloodRequestController::class, 'close'])->whereNumber('id');
 
     Route::get('/jobs', [JobController::class, 'index']);
+    Route::get('/jobs/categories', [JobController::class, 'categories']);
+    Route::get('/jobs/{id}', [JobController::class, 'show'])->whereNumber('id');
+    Route::get('/jobs/my-posts', [JobController::class, 'myPosts']);
+    Route::get('/jobs/my-applications', [JobController::class, 'myApplications']);
+    Route::get('/jobs/{id}/applications', [JobController::class, 'applications'])->whereNumber('id');
     Route::post('/jobs/post', [JobController::class, 'post']);
+    Route::post('/jobs/{id}/update', [JobController::class, 'update'])->whereNumber('id');
+    Route::post('/jobs/{id}/close', [JobController::class, 'close'])->whereNumber('id');
     Route::post('/jobs/apply', [JobController::class, 'apply']);
 
     Route::get('/properties', [PropertyController::class, 'index']);
+    Route::get('/properties/categories', [PropertyController::class, 'categories']);
+    Route::get('/properties/{id}', [PropertyController::class, 'show'])->whereNumber('id');
+    Route::get('/properties/my-posts', [PropertyController::class, 'myPosts']);
     Route::post('/properties/add', [PropertyController::class, 'store']);
+    Route::post('/properties/{id}/update', [PropertyController::class, 'update'])->whereNumber('id');
+    Route::post('/properties/{id}/close', [PropertyController::class, 'close'])->whereNumber('id');
 
     Route::get('/news', [NewsController::class, 'index']);
     Route::get('/news/{id}', [NewsController::class, 'show']);
@@ -78,6 +117,66 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/notices', [NoticeController::class, 'index']);
 
     Route::get('/emergency', [EmergencyController::class, 'index']);
+
+    Route::get('/doctors/categories', [DoctorController::class, 'categories']);
+    Route::get('/doctors', [DoctorController::class, 'index']);
+    Route::get('/doctors/{id}', [DoctorController::class, 'show'])->whereNumber('id');
+    Route::post('/doctors/register', [DoctorController::class, 'register']);
+    Route::post('/doctors/{id}/schedules', [DoctorController::class, 'setSchedules'])->whereNumber('id');
+    Route::post('/doctors/{id}/availability', [DoctorController::class, 'availability'])->whereNumber('id');
+
+    Route::post('/doctor-appointments', [DoctorAppointmentController::class, 'book']);
+    Route::get('/doctor-appointments/my', [DoctorAppointmentController::class, 'myAppointments']);
+    Route::get('/doctor-appointments/doctor/{id}', [DoctorAppointmentController::class, 'doctorAppointments'])->whereNumber('id');
+    Route::post('/doctor-appointments/{id}/status', [DoctorAppointmentController::class, 'updateStatus'])->whereNumber('id');
+
+    Route::get('/teachers/categories', [TeacherController::class, 'categories']);
+    Route::get('/teachers', [TeacherController::class, 'index']);
+    Route::get('/teachers/{id}', [TeacherController::class, 'show'])->whereNumber('id');
+    Route::post('/teachers/register', [TeacherController::class, 'register']);
+    Route::post('/teachers/{id}/availability', [TeacherController::class, 'availability'])->whereNumber('id');
+    Route::get('/teachers/my', [TeacherController::class, 'myTeachers']);
+
+    Route::get('/teacher-requests', [TeacherRequestController::class, 'index']);
+    Route::get('/teacher-requests/{id}', [TeacherRequestController::class, 'show'])->whereNumber('id');
+    Route::post('/teacher-requests', [TeacherRequestController::class, 'store']);
+    Route::post('/teacher-requests/{id}/close', [TeacherRequestController::class, 'close'])->whereNumber('id');
+    Route::get('/teacher-requests/my', [TeacherRequestController::class, 'myRequests']);
+
+    Route::get('/student-requests', [StudentRequestController::class, 'index']);
+    Route::get('/student-requests/{id}', [StudentRequestController::class, 'show'])->whereNumber('id');
+    Route::post('/student-requests', [StudentRequestController::class, 'store']);
+    Route::post('/student-requests/{id}/close', [StudentRequestController::class, 'close'])->whereNumber('id');
+    Route::get('/student-requests/my', [StudentRequestController::class, 'myRequests']);
+
+    Route::get('/hospitals/categories', [HospitalController::class, 'categories']);
+    Route::get('/hospitals', [HospitalController::class, 'index']);
+    Route::get('/hospitals/{id}', [HospitalController::class, 'show'])->whereNumber('id');
+    Route::post('/hospitals/register', [HospitalController::class, 'register']);
+    Route::get('/hospitals/my', [HospitalController::class, 'myHospitals']);
+
+    Route::get('/couriers/companies', [CourierController::class, 'companies']);
+    Route::get('/couriers/offices', [CourierController::class, 'offices']);
+    Route::get('/couriers/company/{id}', [CourierController::class, 'companyShow'])->whereNumber('id');
+    Route::get('/couriers/offices/{id}', [CourierController::class, 'officeShow'])->whereNumber('id');
+    Route::post('/couriers/register', [CourierController::class, 'register']);
+    Route::get('/couriers/my', [CourierController::class, 'myOffices']);
+
+    Route::get('/car-rentals/categories', [CarRentalController::class, 'categories']);
+    Route::get('/car-rentals', [CarRentalController::class, 'index']);
+    Route::get('/car-rentals/{id}', [CarRentalController::class, 'show'])->whereNumber('id');
+    Route::post('/car-rentals', [CarRentalController::class, 'store']);
+    Route::get('/car-rentals/my', [CarRentalController::class, 'myRentals']);
+
+    Route::post('/car-rental-bookings', [CarRentalBookingController::class, 'book']);
+    Route::get('/car-rental-bookings/my', [CarRentalBookingController::class, 'myBookings']);
+    Route::get('/car-rental-bookings/owner/{id}', [CarRentalBookingController::class, 'ownerBookings'])->whereNumber('id');
+    Route::post('/car-rental-bookings/{id}/status', [CarRentalBookingController::class, 'updateStatus'])->whereNumber('id');
+
+    Route::get('/electricity/offices', [ElectricityOfficeController::class, 'index']);
+    Route::get('/electricity/offices/{id}', [ElectricityOfficeController::class, 'show'])->whereNumber('id');
+    Route::post('/electricity/register', [ElectricityOfficeController::class, 'register']);
+    Route::get('/electricity/my', [ElectricityOfficeController::class, 'myOffices']);
 
     Route::post('/payment/bkash', [PaymentController::class, 'bkash']);
     Route::post('/payment/nagad', [PaymentController::class, 'nagad']);

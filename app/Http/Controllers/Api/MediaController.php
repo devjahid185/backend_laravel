@@ -4,10 +4,15 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Business;
+use App\Models\BloodDonor;
+use App\Models\Doctor;
+use App\Models\Hospital;
 use App\Models\JobPost;
 use App\Models\MarketplaceItem;
+use App\Models\CarRental;
 use App\Models\MediaAsset;
 use App\Models\Property;
+use App\Models\Teacher;
 use App\Models\User;
 use App\Models\Worker;
 use App\Support\MediaUrl;
@@ -24,6 +29,11 @@ class MediaController extends Controller
         'user' => User::class,
         'worker' => Worker::class,
         'business' => Business::class,
+        'blood_donor' => BloodDonor::class,
+        'doctor' => Doctor::class,
+        'hospital' => Hospital::class,
+        'car_rental' => CarRental::class,
+        'teacher' => Teacher::class,
         'marketplace_item' => MarketplaceItem::class,
         'property' => Property::class,
         'job_post' => JobPost::class,
@@ -33,11 +43,11 @@ class MediaController extends Controller
     {
         $validated = $request->validate([
             'section' => ['required', 'string', 'max:80'],
-            'target_type' => ['required', 'in:user,worker,business,marketplace_item,property,job_post'],
+            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,car_rental,teacher,marketplace_item,property,job_post'],
             'target_id' => ['required', 'integer', 'min:1'],
             'images' => ['required', 'array', 'min:1', 'max:10'],
             'images.*' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
-            'set_primary' => ['nullable', 'boolean'],
+            'set_primary' => ['nullable'],
         ]);
 
         $target = $this->resolveAndAuthorizeTarget(
@@ -64,20 +74,21 @@ class MediaController extends Controller
                     'public'
                 );
 
+                $setPrimary = $request->boolean('set_primary');
                 $media = MediaAsset::query()->create([
                     'user_id' => $request->user()->id,
                     'section' => $validated['section'],
                     'target_type' => $validated['target_type'],
                     'target_id' => (int) $validated['target_id'],
                     'file_path' => $relativePath,
-                    'is_primary' => (bool) ($validated['set_primary'] ?? false) && $index === 0,
+                    'is_primary' => $setPrimary && $index === 0,
                     'sort_order' => $existingCount + $index,
                 ]);
 
                 $created[] = $this->serializeMedia($media);
             }
 
-            if ((bool) ($validated['set_primary'] ?? false) && count($created) > 0) {
+            if ($setPrimary && count($created) > 0) {
                 MediaAsset::query()
                     ->where('target_type', $validated['target_type'])
                     ->where('target_id', (int) $validated['target_id'])
@@ -95,7 +106,7 @@ class MediaController extends Controller
     public function list(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'target_type' => ['required', 'in:user,worker,business,marketplace_item,property,job_post'],
+            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,car_rental,teacher,marketplace_item,property,job_post'],
             'target_id' => ['required', 'integer', 'min:1'],
         ]);
 
@@ -203,7 +214,7 @@ class MediaController extends Controller
 
         return match ($targetType) {
             'user' => $target->id === $user->id ? $target : null,
-            'worker', 'business', 'marketplace_item', 'property' => (int) $target->user_id === (int) $user->id ? $target : null,
+            'worker', 'business', 'blood_donor', 'doctor', 'teacher', 'marketplace_item', 'property' => (int) $target->user_id === (int) $user->id ? $target : null,
             'job_post' => (int) $target->posted_by === (int) $user->id ? $target : null,
             default => null,
         };
@@ -225,4 +236,3 @@ class MediaController extends Controller
         ];
     }
 }
-

@@ -5,17 +5,15 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Property extends Model
+class Teacher extends Model
 {
     use HasFactory;
 
     protected $guarded = [];
 
     protected $casts = [
-        'amenities' => 'array',
-        'furnished' => 'boolean',
-        'parking' => 'boolean',
-        'negotiable' => 'boolean',
+        'subjects' => 'array',
+        'class_levels' => 'array',
+        'is_available' => 'boolean',
     ];
 }
-

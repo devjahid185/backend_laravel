@@ -16,7 +16,12 @@ class MediaUrl
             return $path;
         }
 
+        $request = request();
+        if ($request) {
+            $base = rtrim($request->getSchemeAndHttpHost(), '/');
+            return $base.'/storage/'.$path;
+        }
+
         return Storage::disk('public')->url($path);
     }
 }
-
