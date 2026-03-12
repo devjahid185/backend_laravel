@@ -6,7 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\BloodDonor;
 use App\Models\Doctor;
+use App\Models\Hotel;
 use App\Models\Hospital;
+use App\Models\EducationInstitute;
+use App\Models\Restaurant;
 use App\Models\JobPost;
 use App\Models\MarketplaceItem;
 use App\Models\CarRental;
@@ -32,6 +35,9 @@ class MediaController extends Controller
         'blood_donor' => BloodDonor::class,
         'doctor' => Doctor::class,
         'hospital' => Hospital::class,
+        'hotel' => Hotel::class,
+        'restaurant' => Restaurant::class,
+        'education' => EducationInstitute::class,
         'car_rental' => CarRental::class,
         'teacher' => Teacher::class,
         'marketplace_item' => MarketplaceItem::class,
@@ -43,7 +49,7 @@ class MediaController extends Controller
     {
         $validated = $request->validate([
             'section' => ['required', 'string', 'max:80'],
-            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,car_rental,teacher,marketplace_item,property,job_post'],
+            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,hotel,restaurant,education,car_rental,teacher,marketplace_item,property,job_post'],
             'target_id' => ['required', 'integer', 'min:1'],
             'images' => ['required', 'array', 'min:1', 'max:10'],
             'images.*' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
@@ -106,7 +112,7 @@ class MediaController extends Controller
     public function list(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,car_rental,teacher,marketplace_item,property,job_post'],
+            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,hotel,restaurant,education,car_rental,teacher,marketplace_item,property,job_post'],
             'target_id' => ['required', 'integer', 'min:1'],
         ]);
 
@@ -214,7 +220,7 @@ class MediaController extends Controller
 
         return match ($targetType) {
             'user' => $target->id === $user->id ? $target : null,
-            'worker', 'business', 'blood_donor', 'doctor', 'teacher', 'marketplace_item', 'property' => (int) $target->user_id === (int) $user->id ? $target : null,
+            'worker', 'business', 'blood_donor', 'doctor', 'hospital', 'hotel', 'restaurant', 'education', 'teacher', 'marketplace_item', 'property' => (int) $target->user_id === (int) $user->id ? $target : null,
             'job_post' => (int) $target->posted_by === (int) $user->id ? $target : null,
             default => null,
         };

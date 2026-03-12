@@ -1,0 +1,7 @@
+﻿<svg width="1600" height="900" viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="900" fill="#0f172a"/>
+  <rect x="120" y="140" width="1360" height="620" fill="#0f766e" opacity="0.18"/>
+  <rect x="180" y="200" width="1240" height="500" fill="#f1f5f9" opacity="0.08"/>
+  <text x="160" y="420" fill="#ffffff" font-size="56" font-family="'Hind Siliguri', Arial, sans-serif" font-weight="700">জেলা সুপার অ্যাপ আপডেটস</text>
+  <text x="160" y="490" fill="#cbd5f5" font-size="28" font-family="'Hind Siliguri', Arial, sans-serif">নতুন ফিচার ও ঘোষণা</text>
+</svg>

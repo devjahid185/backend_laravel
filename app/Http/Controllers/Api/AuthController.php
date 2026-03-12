@@ -90,6 +90,7 @@ class AuthController extends Controller
     {
         $validated = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
+            'phone' => ['sometimes', 'string', 'max:20', 'unique:users,phone,'.$request->user()->id],
             'email' => ['sometimes', 'nullable', 'email', 'max:255', 'unique:users,email,'.$request->user()->id],
             'photo' => ['sometimes', 'nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             'photo_path' => ['sometimes', 'nullable', 'string', 'max:255'],
@@ -114,11 +115,20 @@ class AuthController extends Controller
         }
 
         unset($validated['photo_path']);
+        if (! empty($validated['password'])) {
+            $validated['password'] = Hash::make($validated['password']);
+        } else {
+            unset($validated['password']);
+        }
         $request->user()->update($validated);
+        $user = $request->user()->fresh();
 
         return response()->json([
             'message' => 'Profile updated successfully',
-            'user' => $request->user()->fresh(),
+            'user' => [
+                ...$user->toArray(),
+                'photo_url' => MediaUrl::toUrl($user->photo),
+            ],
         ]);
     }
 }

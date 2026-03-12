@@ -12,7 +12,11 @@ use App\Http\Controllers\Api\CarRentalController;
 use App\Http\Controllers\Api\DoctorAppointmentController;
 use App\Http\Controllers\Api\DoctorController;
 use App\Http\Controllers\Api\ElectricityOfficeController;
+use App\Http\Controllers\Api\FaqController;
 use App\Http\Controllers\Api\HospitalController;
+use App\Http\Controllers\Api\HotelController;
+use App\Http\Controllers\Api\RestaurantController;
+use App\Http\Controllers\Api\EducationController;
 use App\Http\Controllers\Api\StudentRequestController;
 use App\Http\Controllers\Api\TeacherController;
 use App\Http\Controllers\Api\TeacherRequestController;
@@ -65,12 +69,18 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/reviews/business/{id}', [ReviewController::class, 'businessReviews']);
     Route::post('/reviews/hospital', [ReviewController::class, 'rateHospital']);
     Route::get('/reviews/hospital/{id}', [ReviewController::class, 'hospitalReviews']);
+    Route::post('/reviews/hotel', [ReviewController::class, 'rateHotel']);
+    Route::get('/reviews/hotel/{id}', [ReviewController::class, 'hotelReviews']);
     Route::post('/reviews/car-rental', [ReviewController::class, 'rateCarRental']);
     Route::get('/reviews/car-rental/{id}', [ReviewController::class, 'carRentalReviews']);
     Route::post('/reviews/courier', [ReviewController::class, 'rateCourier']);
     Route::get('/reviews/courier/{id}', [ReviewController::class, 'courierReviews']);
     Route::post('/reviews/teacher', [ReviewController::class, 'rateTeacher']);
     Route::get('/reviews/teacher/{id}', [ReviewController::class, 'teacherReviews']);
+    Route::post('/reviews/restaurant', [ReviewController::class, 'rateRestaurant']);
+    Route::get('/reviews/restaurant/{id}', [ReviewController::class, 'restaurantReviews']);
+    Route::post('/reviews/education', [ReviewController::class, 'rateEducation']);
+    Route::get('/reviews/education/{id}', [ReviewController::class, 'educationReviews']);
 
     Route::get('/items', [MarketplaceController::class, 'index']);
     Route::get('/items/{id}', [MarketplaceController::class, 'show'])->whereNumber('id');
@@ -116,6 +126,8 @@ Route::middleware('auth:sanctum')->group(function (): void {
 
     Route::get('/notices', [NoticeController::class, 'index']);
 
+    Route::get('/faqs', [FaqController::class, 'index']);
+
     Route::get('/emergency', [EmergencyController::class, 'index']);
 
     Route::get('/doctors/categories', [DoctorController::class, 'categories']);
@@ -154,6 +166,24 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/hospitals/{id}', [HospitalController::class, 'show'])->whereNumber('id');
     Route::post('/hospitals/register', [HospitalController::class, 'register']);
     Route::get('/hospitals/my', [HospitalController::class, 'myHospitals']);
+
+    Route::get('/hotels/categories', [HotelController::class, 'categories']);
+    Route::get('/hotels', [HotelController::class, 'index']);
+    Route::get('/hotels/{id}', [HotelController::class, 'show'])->whereNumber('id');
+    Route::post('/hotels/register', [HotelController::class, 'register']);
+    Route::get('/hotels/my', [HotelController::class, 'myHotels']);
+
+    Route::get('/restaurants/categories', [RestaurantController::class, 'categories']);
+    Route::get('/restaurants', [RestaurantController::class, 'index']);
+    Route::get('/restaurants/{id}', [RestaurantController::class, 'show'])->whereNumber('id');
+    Route::post('/restaurants/register', [RestaurantController::class, 'register']);
+    Route::get('/restaurants/my', [RestaurantController::class, 'myRestaurants']);
+
+    Route::get('/education/categories', [EducationController::class, 'categories']);
+    Route::get('/education', [EducationController::class, 'index']);
+    Route::get('/education/{id}', [EducationController::class, 'show'])->whereNumber('id');
+    Route::post('/education/register', [EducationController::class, 'register']);
+    Route::get('/education/my', [EducationController::class, 'myInstitutes']);
 
     Route::get('/couriers/companies', [CourierController::class, 'companies']);
     Route::get('/couriers/offices', [CourierController::class, 'offices']);

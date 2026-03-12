@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Database\Seeders;
 
@@ -6,6 +6,9 @@ use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
+    /**
+     * Seed the application's database.
+     */
     public function run(): void
     {
         $this->call([
@@ -15,11 +18,13 @@ class DatabaseSeeder extends Seeder
             TeacherCategorySeeder::class,
             HospitalCategorySeeder::class,
             HospitalSeeder::class,
-            CarCategorySeeder::class,
-            CourierSeeder::class,
-            ElectricityOfficeSeeder::class,
-            DomainSeeder::class,
-            DemoContentSeeder::class,
+            HotelCategorySeeder::class,
+            HotelSeeder::class,
+            RestaurantCategorySeeder::class,
+            RestaurantSeeder::class,
+            EducationCategorySeeder::class,
+            EducationSeeder::class,
+            UpdatePostSeeder::class,
         ]);
     }
 }

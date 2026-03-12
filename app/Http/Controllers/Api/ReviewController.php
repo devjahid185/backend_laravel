@@ -5,6 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\Hospital;
+use App\Models\Hotel;
+use App\Models\Restaurant;
+use App\Models\EducationInstitute;
 use App\Models\Review;
 use App\Models\User;
 use App\Models\Worker;
@@ -111,6 +114,60 @@ class ReviewController extends Controller
         $reviews = Review::query()
             ->where('type', 'teacher')
             ->where('target_id', $teacherId)
+            ->join('users', 'users.id', '=', 'reviews.user_id')
+            ->orderByDesc('reviews.id')
+            ->get([
+                'reviews.id',
+                'reviews.rating',
+                'reviews.comment',
+                'reviews.created_at',
+                'users.name as user_name',
+            ]);
+
+        return response()->json($reviews);
+    }
+
+    public function hotelReviews(int $hotelId): JsonResponse
+    {
+        $reviews = Review::query()
+            ->where('type', 'hotel')
+            ->where('target_id', $hotelId)
+            ->join('users', 'users.id', '=', 'reviews.user_id')
+            ->orderByDesc('reviews.id')
+            ->get([
+                'reviews.id',
+                'reviews.rating',
+                'reviews.comment',
+                'reviews.created_at',
+                'users.name as user_name',
+            ]);
+
+        return response()->json($reviews);
+    }
+
+    public function restaurantReviews(int $restaurantId): JsonResponse
+    {
+        $reviews = Review::query()
+            ->where('type', 'restaurant')
+            ->where('target_id', $restaurantId)
+            ->join('users', 'users.id', '=', 'reviews.user_id')
+            ->orderByDesc('reviews.id')
+            ->get([
+                'reviews.id',
+                'reviews.rating',
+                'reviews.comment',
+                'reviews.created_at',
+                'users.name as user_name',
+            ]);
+
+        return response()->json($reviews);
+    }
+
+    public function educationReviews(int $instituteId): JsonResponse
+    {
+        $reviews = Review::query()
+            ->where('type', 'education')
+            ->where('target_id', $instituteId)
             ->join('users', 'users.id', '=', 'reviews.user_id')
             ->orderByDesc('reviews.id')
             ->get([
@@ -379,6 +436,133 @@ class ReviewController extends Controller
 
         return response()->json([
             'message' => 'à¦°à§‡à¦Ÿà¦¿à¦‚ à¦œà¦®à¦¾ à¦¹à§Ÿà§‡à¦›à§‡',
+            'review' => $review,
+            'average_rating' => round((float) $avgRating, 2),
+        ]);
+    }
+    public function rateHotel(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'target_id' => ['required', 'exists:hotels,id'],
+            'rating' => ['required', 'integer', 'min:1', 'max:5'],
+            'comment' => ['nullable', 'string'],
+        ]);
+
+        $ownerId = Hotel::query()
+            ->where('id', $validated['target_id'])
+            ->value('user_id');
+        if ($ownerId && $ownerId === $request->user()->id) {
+            return response()->json(['message' => 'নিজের হোটেলে রেটিং দেওয়া যাবে না'], 403);
+        }
+
+        $review = Review::query()->updateOrCreate(
+            [
+                'user_id' => $request->user()->id,
+                'type' => 'hotel',
+                'target_id' => $validated['target_id'],
+            ],
+            [
+                'rating' => $validated['rating'],
+                'comment' => $validated['comment'] ?? null,
+            ]
+        );
+
+        $avgRating = Review::query()
+            ->where('type', 'hotel')
+            ->where('target_id', $validated['target_id'])
+            ->avg('rating');
+
+        Hotel::query()
+            ->where('id', $validated['target_id'])
+            ->update(['rating' => round((float) $avgRating, 2)]);
+
+        return response()->json([
+            'message' => 'রেটিং জমা হয়েছে',
+            'review' => $review,
+            'average_rating' => round((float) $avgRating, 2),
+        ]);
+    }
+    public function rateRestaurant(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'target_id' => ['required', 'exists:restaurants,id'],
+            'rating' => ['required', 'integer', 'min:1', 'max:5'],
+            'comment' => ['nullable', 'string'],
+        ]);
+
+        $ownerId = Restaurant::query()
+            ->where('id', $validated['target_id'])
+            ->value('user_id');
+        if ($ownerId && $ownerId === $request->user()->id) {
+            return response()->json(['message' => 'নিজের রেস্টুরেন্টে রেটিং দেওয়া যাবে না'], 403);
+        }
+
+        $review = Review::query()->updateOrCreate(
+            [
+                'user_id' => $request->user()->id,
+                'type' => 'restaurant',
+                'target_id' => $validated['target_id'],
+            ],
+            [
+                'rating' => $validated['rating'],
+                'comment' => $validated['comment'] ?? null,
+            ]
+        );
+
+        $avgRating = Review::query()
+            ->where('type', 'restaurant')
+            ->where('target_id', $validated['target_id'])
+            ->avg('rating');
+
+        Restaurant::query()
+            ->where('id', $validated['target_id'])
+            ->update(['rating' => round((float) $avgRating, 2)]);
+
+        return response()->json([
+            'message' => 'রেটিং জমা হয়েছে',
+            'review' => $review,
+            'average_rating' => round((float) $avgRating, 2),
+        ]);
+    }
+
+    public function rateEducation(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'target_id' => ['required', 'exists:education_institutes,id'],
+            'rating' => ['required', 'integer', 'min:1', 'max:5'],
+            'comment' => ['nullable', 'string'],
+        ]);
+
+        $ownerId = EducationInstitute::query()
+            ->where('id', $validated['target_id'])
+            ->value('user_id');
+        if ($ownerId && $ownerId === $request->user()->id) {
+            return response()->json(['message' => 'নিজের প্রতিষ্ঠানে রেটিং দেওয়া যাবে না'], 403);
+        }
+
+        $review = Review::query()->updateOrCreate(
+            [
+                'user_id' => $request->user()->id,
+                'type' => 'education',
+                'target_id' => $validated['target_id'],
+            ],
+            [
+                'rating' => $validated['rating'],
+                'comment' => $validated['comment'] ?? null,
+            ]
+        );
+
+        $avgRating = Review::query()
+            ->where('type', 'education')
+            ->where('target_id', $validated['target_id'])
+            ->avg('rating');
+
+        EducationInstitute::query()
+            ->where('id', $validated['target_id'])
+            ->update(['rating' => round((float) $avgRating, 2)]);
+
+        return response()->json([
+            'message' => 'রেটিং জমা হয়েছে',
             'review' => $review,
             'average_rating' => round((float) $avgRating, 2),
         ]);
