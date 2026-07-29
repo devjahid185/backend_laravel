@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 namespace Database\Seeders;
 
@@ -12,6 +12,8 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call([
+            AdminSeeder::class,
+            AdminModuleSeeder::class,
             JobCategorySeeder::class,
             PropertyCategorySeeder::class,
             DoctorCategorySeeder::class,
@@ -24,6 +26,7 @@ class DatabaseSeeder extends Seeder
             RestaurantSeeder::class,
             EducationCategorySeeder::class,
             EducationSeeder::class,
+            LaunchSeeder::class,
             UpdatePostSeeder::class,
         ]);
     }

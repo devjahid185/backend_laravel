@@ -44,7 +44,7 @@ class MarketplaceController extends Controller
             ->when($request->input('sort') === 'price_asc', fn ($q) => $q->orderBy('marketplace_items.price'))
             ->when($request->input('sort') === 'price_desc', fn ($q) => $q->orderByDesc('marketplace_items.price'))
             ->when(! in_array($request->input('sort'), ['price_asc', 'price_desc'], true), fn ($q) => $q->orderByDesc('marketplace_items.id'))
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $itemIds = array_column($items->items(), 'id');
         $primaryMap = MediaLookup::primaryUrlMap('marketplace_item', $itemIds);
@@ -129,7 +129,7 @@ class MarketplaceController extends Controller
             ->where('marketplace_items.user_id', $sellerId)
             ->where('marketplace_items.status', 'active')
             ->orderByDesc('marketplace_items.id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $itemIds = array_column($items->items(), 'id');
         $primaryMap = MediaLookup::primaryUrlMap('marketplace_item', $itemIds);

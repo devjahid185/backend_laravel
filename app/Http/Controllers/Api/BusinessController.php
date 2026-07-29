@@ -30,7 +30,7 @@ class BusinessController extends Controller
             ->select('businesses.*', 'business_categories.name as category_name')
             ->when($request->filled('category_id'), fn ($q) => $q->where('businesses.category_id', $request->integer('category_id')))
             ->orderByDesc('businesses.id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $logoMap = MediaLookup::primaryUrlMap('business', array_column($businesses->items(), 'id'));
 

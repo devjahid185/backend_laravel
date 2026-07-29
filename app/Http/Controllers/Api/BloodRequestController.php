@@ -17,7 +17,7 @@ class BloodRequestController extends Controller
             ->when($request->filled('district'), fn ($q) => $q->where('district', $request->input('district')))
             ->when($request->filled('location'), fn ($q) => $q->where('location', 'like', '%'.$request->input('location').'%'))
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $requests->setCollection(
             $requests->getCollection()->map(function (BloodRequest $req) use ($request) {

@@ -39,7 +39,7 @@ class CarRentalBookingController extends Controller
         $bookings = CarRentalBooking::query()
             ->where('user_id', $request->user()->id)
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         return response()->json($bookings);
     }
@@ -54,7 +54,7 @@ class CarRentalBookingController extends Controller
         $bookings = CarRentalBooking::query()
             ->where('car_rental_id', $rentalId)
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         return response()->json($bookings);
     }

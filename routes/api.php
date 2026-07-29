@@ -1,11 +1,23 @@
-<?php
+﻿<?php
 
-use App\Http\Controllers\Api\AdminController;
+use App\Http\Controllers\Api\AdminAuthController;
+use App\Http\Controllers\Api\AdminAdminController;
+use App\Http\Controllers\Api\AdminModuleController;
+use App\Http\Controllers\Api\AdminReportController;
+use App\Http\Controllers\Api\AdminResourceController;
+use App\Http\Controllers\Api\AdminReviewController;
+use App\Http\Controllers\Api\AdminDashboardController;
+use App\Http\Controllers\Api\AdminEmailSettingController;
+use App\Http\Controllers\Api\AdminNotificationController;
+use App\Http\Controllers\Api\AdminProfileController;
+use App\Http\Controllers\Api\AdminSmsSettingController;
+use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BloodDonorController;
 use App\Http\Controllers\Api\BloodRequestController;
 use App\Http\Controllers\Api\BookingController;
 use App\Http\Controllers\Api\BusinessController;
+use App\Http\Controllers\Api\DeviceTokenController;
 use App\Http\Controllers\Api\CourierController;
 use App\Http\Controllers\Api\CarRentalBookingController;
 use App\Http\Controllers\Api\CarRentalController;
@@ -17,16 +29,19 @@ use App\Http\Controllers\Api\HospitalController;
 use App\Http\Controllers\Api\HotelController;
 use App\Http\Controllers\Api\RestaurantController;
 use App\Http\Controllers\Api\EducationController;
+use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\StudentRequestController;
 use App\Http\Controllers\Api\TeacherController;
 use App\Http\Controllers\Api\TeacherRequestController;
 use App\Http\Controllers\Api\EmergencyController;
 use App\Http\Controllers\Api\JobController;
+use App\Http\Controllers\Api\LaunchController;
 use App\Http\Controllers\Api\MarketplaceController;
 use App\Http\Controllers\Api\MediaController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\NewsController;
 use App\Http\Controllers\Api\NoticeController;
+use App\Http\Controllers\Api\NotificationPreferenceController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\PropertyController;
 use App\Http\Controllers\Api\ReviewController;
@@ -35,12 +50,66 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login-google', [AuthController::class, 'loginGoogle']);
+Route::post('/admin/login', [AdminAuthController::class, 'login']);
+Route::post('/request-otp', [AuthController::class, 'requestOtp']);
+Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
+Route::post('/register-otp', [AuthController::class, 'registerWithOtp']);
+Route::post('/reset-password', [AuthController::class, 'resetPasswordWithOtp']);
 
+Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
+    Route::get('/admin/me', [AdminAuthController::class, 'me']);
+    Route::post('/admin/logout', [AdminAuthController::class, 'logout']);
+    Route::get('/admin/modules', [AdminModuleController::class, 'index']);
+    Route::get('/admin/stats', [AdminDashboardController::class, 'stats']);
+    Route::get('/admin/profile', [AdminProfileController::class, 'show']);
+    Route::post('/admin/profile', [AdminProfileController::class, 'update']);
+    Route::get('/admin/notifications', [AdminNotificationController::class, 'index']);
+    Route::post('/admin/notifications/send', [AdminNotificationController::class, 'send']);
+    Route::get('/admin/sms-settings', [AdminSmsSettingController::class, 'show']);
+    Route::put('/admin/sms-settings', [AdminSmsSettingController::class, 'update']);
+    Route::post('/admin/sms-settings/test', [AdminSmsSettingController::class, 'test']);
+    Route::get('/admin/email-settings', [AdminEmailSettingController::class, 'show']);
+    Route::put('/admin/email-settings', [AdminEmailSettingController::class, 'update']);
+    Route::post('/admin/email-settings/test', [AdminEmailSettingController::class, 'test']);
+
+    Route::get('/admin/users', [AdminUserController::class, 'index']);
+    Route::post('/admin/users', [AdminUserController::class, 'store']);
+    Route::get('/admin/users/{id}', [AdminUserController::class, 'show'])->whereNumber('id');
+    Route::put('/admin/users/{id}', [AdminUserController::class, 'update'])->whereNumber('id');
+    Route::delete('/admin/users/{id}', [AdminUserController::class, 'destroy'])->whereNumber('id');
+
+    Route::get('/admin/admins', [AdminAdminController::class, 'index']);
+    Route::post('/admin/admins', [AdminAdminController::class, 'store']);
+    Route::put('/admin/admins/{id}', [AdminAdminController::class, 'update'])->whereNumber('id');
+    Route::delete('/admin/admins/{id}', [AdminAdminController::class, 'destroy'])->whereNumber('id');
+
+    Route::get('/admin/reports', [AdminReportController::class, 'index']);
+    Route::put('/admin/reports/{id}', [AdminReportController::class, 'update'])->whereNumber('id');
+    Route::delete('/admin/reports/{id}', [AdminReportController::class, 'destroy'])->whereNumber('id');
+
+    Route::get('/admin/reviews', [AdminReviewController::class, 'index']);
+    Route::delete('/admin/reviews/{id}', [AdminReviewController::class, 'destroy'])->whereNumber('id');
+
+    Route::get('/admin/resources/{resource}', [AdminResourceController::class, 'index']);
+    Route::post('/admin/resources/{resource}', [AdminResourceController::class, 'store']);
+    Route::get('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'show'])->whereNumber('id');
+    Route::put('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'update'])->whereNumber('id');
+    Route::delete('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'destroy'])->whereNumber('id');
+});
 Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/profile', [AuthController::class, 'profile']);
     Route::post('/update-profile', [AuthController::class, 'updateProfile']);
     Route::post('/profile/photo', [MediaController::class, 'uploadProfilePhoto']);
+    Route::post('/device-token', [DeviceTokenController::class, 'store']);
+    Route::delete('/device-token', [DeviceTokenController::class, 'destroy']);
+    Route::get('/notifications', [NotificationController::class, 'index']);
+    Route::post('/notifications/{id}/read', [NotificationController::class, 'markRead'])->whereNumber('id');
+    Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
+    Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
+    Route::get('/notifications/preferences', [NotificationPreferenceController::class, 'show']);
+    Route::post('/notifications/preferences', [NotificationPreferenceController::class, 'update']);
 
     Route::post('/media/upload', [MediaController::class, 'upload']);
     Route::get('/media/list', [MediaController::class, 'list']);
@@ -92,6 +161,10 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/items/report', [MarketplaceController::class, 'report']);
 
     Route::get('/messages', [MessageController::class, 'index']);
+    Route::get('/messages/inbox', [MessageController::class, 'inbox']);
+    Route::post('/messages/upload', [MessageController::class, 'upload']);
+    Route::post('/messages/typing', [MessageController::class, 'typing']);
+    Route::get('/messages/typing-status', [MessageController::class, 'typingStatus']);
     Route::post('/send-message', [MessageController::class, 'send']);
 
     Route::get('/blood-donors', [BloodDonorController::class, 'index']);
@@ -198,6 +271,11 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/car-rentals', [CarRentalController::class, 'store']);
     Route::get('/car-rentals/my', [CarRentalController::class, 'myRentals']);
 
+    Route::get('/launches', [LaunchController::class, 'index']);
+    Route::get('/launches/{id}', [LaunchController::class, 'show'])->whereNumber('id');
+    Route::post('/launches/register', [LaunchController::class, 'store']);
+    Route::get('/launches/my', [LaunchController::class, 'myLaunches']);
+
     Route::post('/car-rental-bookings', [CarRentalBookingController::class, 'book']);
     Route::get('/car-rental-bookings/my', [CarRentalBookingController::class, 'myBookings']);
     Route::get('/car-rental-bookings/owner/{id}', [CarRentalBookingController::class, 'ownerBookings'])->whereNumber('id');
@@ -212,9 +290,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/payment/nagad', [PaymentController::class, 'nagad']);
     Route::post('/payment/verify', [PaymentController::class, 'verify']);
 
-    Route::get('/admin/dashboard', [AdminController::class, 'dashboard']);
-    Route::get('/admin/users', [AdminController::class, 'users']);
-    Route::post('/admin/block-user', [AdminController::class, 'blockUser']);
-    Route::post('/admin/approve-worker', [AdminController::class, 'approveWorker']);
-    Route::post('/admin/delete-ad', [AdminController::class, 'deleteAd']);
 });
+
+
+

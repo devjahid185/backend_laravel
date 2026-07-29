@@ -42,7 +42,7 @@ class WorkerController extends Controller
             ->when($request->filled('district'), fn ($q) => $q->where('users.district', $request->input('district')))
             ->where('workers.status', 'approved')
             ->orderByDesc('workers.id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $photoMap = MediaLookup::primaryUrlMap('worker', array_column($workers->items(), 'id'));
 

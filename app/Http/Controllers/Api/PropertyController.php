@@ -28,7 +28,7 @@ class PropertyController extends Controller
             }))
             ->when($request->input('status') !== 'all', fn ($q) => $q->where('status', 'open'))
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
         $map = MediaLookup::primaryUrlMap('property', array_column($properties->items(), 'id'));
 
         $properties->setCollection(
@@ -177,7 +177,7 @@ class PropertyController extends Controller
         $properties = Property::query()
             ->where('user_id', $request->user()->id)
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $map = MediaLookup::primaryUrlMap('property', array_column($properties->items(), 'id'));
         $properties->setCollection(

@@ -18,7 +18,7 @@ class BloodDonorController extends Controller
             ->when($request->filled('district'), fn ($q) => $q->where('district', $request->input('district')))
             ->when($request->input('available') !== 'all', fn ($q) => $q->where('available', true))
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $map = MediaLookup::primaryUrlMap('blood_donor', array_column($donors->items(), 'id'));
         $donors->setCollection(

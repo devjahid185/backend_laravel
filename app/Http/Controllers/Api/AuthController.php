@@ -3,12 +3,18 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\PhoneOtp;
 use App\Models\User;
+use App\Services\SmsService;
 use App\Support\MediaUrl;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -35,6 +41,135 @@ class AuthController extends Controller
             'token' => $token,
             'user' => $user,
         ], 201);
+    }
+
+    public function requestOtp(Request $request, SmsService $sms): JsonResponse
+    {
+        $validated = $request->validate([
+            'phone' => ['required', 'string', 'max:20'],
+            'purpose' => ['required', 'in:register,reset,login'],
+        ]);
+
+        PhoneOtp::query()
+            ->where('phone', $validated['phone'])
+            ->where('purpose', $validated['purpose'])
+            ->delete();
+
+        $code = (string) random_int(100000, 999999);
+        $otp = PhoneOtp::query()->create([
+            'phone' => $validated['phone'],
+            'code' => $code,
+            'purpose' => $validated['purpose'],
+            'expires_at' => now()->addMinutes(5),
+        ]);
+        Log::info("Generated OTP for {$validated['phone']} ({$validated['purpose']}): $code");
+
+        try {
+            $sms->sendOtp($validated['phone'], $code);
+        } catch (\Throwable $e) {
+            Log::error('OTP SMS failed', [
+                'phone' => $this->maskPhone($validated['phone']),
+                'purpose' => $validated['purpose'],
+                'error' => $e->getMessage(),
+            ]);
+
+            $message = 'OTP পাঠাতে সমস্যা হয়েছে। একটু পরে আবার চেষ্টা করুন।';
+            if (config('app.debug')) {
+                $message = $message.' ('.$e->getMessage().')';
+            }
+
+            return response()->json(['message' => $message], 500);
+        }
+
+        $response = [
+            'message' => 'OTP sent to your phone',
+            'expires_at' => $otp->expires_at,
+        ];
+
+        if (config('app.debug')) {
+            $response['otp'] = $code;
+        }
+
+        return response()->json($response);
+    }
+
+    private function maskPhone(string $phone): string
+    {
+        $digits = preg_replace('/\D+/', '', $phone);
+        if (strlen($digits) <= 4) {
+            return $digits;
+        }
+
+        $start = substr($digits, 0, 2);
+        $end = substr($digits, -2);
+
+        return $start . str_repeat('*', max(0, strlen($digits) - 4)) . $end;
+    }
+
+    public function verifyOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'phone' => ['required', 'string', 'max:20'],
+            'purpose' => ['required', 'in:register,reset,login'],
+            'otp' => ['required', 'string', 'size:6'],
+        ]);
+
+        $otp = $this->consumeOtp($validated['phone'], $validated['purpose'], $validated['otp']);
+
+        return response()->json([
+            'message' => 'OTP verified',
+            'verified_at' => $otp->consumed_at,
+        ]);
+    }
+
+    public function registerWithOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'phone' => ['required', 'string', 'max:20', 'unique:users,phone'],
+            'email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
+            'password' => ['required', 'string', 'min:6'],
+            'district' => ['nullable', 'string', 'max:255'],
+            'upazila' => ['nullable', 'string', 'max:255'],
+            'otp' => ['required', 'string', 'size:6'],
+        ]);
+
+        $this->consumeOtp($validated['phone'], 'register', $validated['otp']);
+
+        $user = User::query()->create([
+            ...$validated,
+            'password' => Hash::make($validated['password']),
+        ]);
+
+        $token = $user->createToken('mobile-app')->plainTextToken;
+
+        return response()->json([
+            'message' => 'Registration successful',
+            'token' => $token,
+            'user' => $user,
+        ], 201);
+    }
+
+    public function resetPasswordWithOtp(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'phone' => ['required', 'string', 'max:20'],
+            'otp' => ['required', 'string', 'size:6'],
+            'password' => ['required', 'string', 'min:6'],
+        ]);
+
+        $this->consumeOtp($validated['phone'], 'reset', $validated['otp']);
+
+        $user = User::query()->where('phone', $validated['phone'])->first();
+        if (! $user) {
+            throw ValidationException::withMessages([
+                'phone' => ['User not found.'],
+            ]);
+        }
+
+        $user->update(['password' => Hash::make($validated['password'])]);
+
+        return response()->json(['message' => 'Password reset successful']);
     }
 
     public function login(Request $request): JsonResponse
@@ -67,6 +202,115 @@ class AuthController extends Controller
             'token' => $token,
             'user' => $user,
         ]);
+    }
+
+    public function loginGoogle(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'id_token' => ['required', 'string'],
+        ]);
+
+        $clientIds = $this->googleClientIds();
+        if (empty($clientIds)) {
+            return response()->json(['message' => 'Google login not configured.'], 500);
+        }
+
+        $response = Http::get('https://oauth2.googleapis.com/tokeninfo', [
+            'id_token' => $validated['id_token'],
+        ]);
+
+        if (! $response->ok()) {
+            return response()->json(['message' => 'Invalid Google token.'], 401);
+        }
+
+        $data = $response->json();
+        $aud = $data['aud'] ?? null;
+        if (! $aud || ! in_array($aud, $clientIds, true)) {
+            return response()->json(['message' => 'Google token audience mismatch.'], 401);
+        }
+
+        $googleId = $data['sub'] ?? null;
+        $email = $data['email'] ?? null;
+        $name = $data['name'] ?? 'Google User';
+        $picture = $data['picture'] ?? null;
+        $emailVerified = filter_var($data['email_verified'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+        if (! $googleId || ! $email) {
+            return response()->json(['message' => 'Google account data missing.'], 422);
+        }
+
+        $user = User::query()
+            ->where('google_id', $googleId)
+            ->orWhere('email', $email)
+            ->first();
+
+        if (! $user) {
+            $user = User::query()->create([
+                'name' => $name,
+                'email' => $email,
+                'phone' => null,
+                'google_id' => $googleId,
+                'password' => Hash::make(Str::random(40)),
+                'photo' => $picture,
+                'email_verified_at' => $emailVerified ? now() : null,
+                'verified' => $emailVerified,
+            ]);
+        } else {
+            $user->google_id = $user->google_id ?: $googleId;
+            if ($picture && empty($user->photo)) {
+                $user->photo = $picture;
+            }
+            if ($emailVerified && ! $user->email_verified_at) {
+                $user->email_verified_at = now();
+                $user->verified = true;
+            }
+            $user->save();
+        }
+
+        if ($user->is_blocked) {
+            return response()->json(['message' => 'Your account is blocked.'], 403);
+        }
+
+        $token = $user->createToken('mobile-app')->plainTextToken;
+
+        return response()->json([
+            'message' => 'Login successful',
+            'token' => $token,
+            'user' => $user,
+        ]);
+    }
+
+    private function consumeOtp(string $phone, string $purpose, string $code): PhoneOtp
+    {
+        $otp = PhoneOtp::query()
+            ->where('phone', $phone)
+            ->where('purpose', $purpose)
+            ->whereNull('consumed_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $otp || $otp->code !== $code) {
+            throw ValidationException::withMessages([
+                'otp' => ['Invalid OTP.'],
+            ]);
+        }
+
+        if ($otp->expires_at->isPast()) {
+            throw ValidationException::withMessages([
+                'otp' => ['OTP expired.'],
+            ]);
+        }
+
+        $otp->update(['consumed_at' => Carbon::now()]);
+
+        return $otp;
+    }
+
+    private function googleClientIds(): array
+    {
+        $raw = (string) config('services.google.client_ids');
+        $list = array_filter(array_map('trim', explode(',', $raw)));
+        return array_values($list);
     }
 
     public function logout(Request $request): JsonResponse

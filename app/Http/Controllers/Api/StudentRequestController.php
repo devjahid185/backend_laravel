@@ -25,7 +25,7 @@ class StudentRequestController extends Controller
                     ->orWhere('address', 'like', $term);
             }))
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $categoryMap = TeacherCategory::query()->pluck('name', 'id')->all();
         $requests->setCollection(

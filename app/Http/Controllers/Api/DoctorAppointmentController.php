@@ -39,7 +39,7 @@ class DoctorAppointmentController extends Controller
         $appointments = DoctorAppointment::query()
             ->where('user_id', $request->user()->id)
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $doctorIds = $appointments->pluck('doctor_id')->unique()->filter()->all();
         $doctorMap = Doctor::query()
@@ -71,7 +71,7 @@ class DoctorAppointmentController extends Controller
         $appointments = DoctorAppointment::query()
             ->where('doctor_id', $doctorId)
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         return response()->json($appointments);
     }

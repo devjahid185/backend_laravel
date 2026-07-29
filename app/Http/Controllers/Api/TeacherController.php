@@ -32,7 +32,7 @@ class TeacherController extends Controller
             }))
             ->where('status', 'active')
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $map = MediaLookup::primaryUrlMap('teacher', array_column($teachers->items(), 'id'));
         $teachers->setCollection(

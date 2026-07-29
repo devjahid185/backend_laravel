@@ -34,7 +34,7 @@ class CarRentalController extends Controller
             }))
             ->where('status', 'active')
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $map = MediaLookup::primaryUrlMap('car_rental', array_column($rentals->items(), 'id'));
         $rentals->setCollection(

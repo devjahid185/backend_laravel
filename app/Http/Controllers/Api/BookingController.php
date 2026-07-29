@@ -43,7 +43,7 @@ class BookingController extends Controller
             )
             ->where('service_bookings.user_id', $request->user()->id)
             ->orderByDesc('service_bookings.id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         return response()->json($bookings);
     }

@@ -32,7 +32,7 @@ class JobController extends Controller
             ->when($request->filled('salary_max'), fn ($q) => $q->where('salary_min', '<=', (float) $request->input('salary_max')))
             ->when($request->input('status') !== 'all', fn ($q) => $q->where('status', 'open'))
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
         $map = MediaLookup::primaryUrlMap('job_post', array_column($jobs->items(), 'id'));
 
         $jobs->setCollection(
@@ -168,7 +168,7 @@ class JobController extends Controller
         $jobs = JobPost::query()
             ->where('posted_by', $request->user()->id)
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $map = MediaLookup::primaryUrlMap('job_post', array_column($jobs->items(), 'id'));
         $jobs->setCollection(
@@ -188,7 +188,7 @@ class JobController extends Controller
             ->with('jobPost')
             ->where('user_id', $request->user()->id)
             ->orderByDesc('id')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $apps->setCollection(
             $apps->getCollection()->map(function (JobApplication $app) {

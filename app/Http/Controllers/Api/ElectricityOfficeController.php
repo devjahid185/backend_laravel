@@ -24,7 +24,7 @@ class ElectricityOfficeController extends Controller
             }))
             ->where('status', 'active')
             ->orderBy('name')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $offices->setCollection(
             $offices->getCollection()->map(function (ElectricityOffice $office) use ($request) {

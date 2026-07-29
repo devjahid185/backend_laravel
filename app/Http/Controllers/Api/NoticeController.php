@@ -11,7 +11,7 @@ class NoticeController extends Controller
 {
     public function index(): JsonResponse
     {
-        $notices = Notice::query()->latest()->paginate(20);
+        $notices = Notice::query()->latest()->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
         $map = MediaLookup::primaryUrlMap('notice', array_column($notices->items(), 'id'));
 
         $notices->setCollection(

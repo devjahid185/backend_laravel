@@ -16,6 +16,8 @@ class User extends Authenticatable
         'name',
         'phone',
         'email',
+        'google_id',
+        'email_verified_at',
         'password',
         'photo',
         'district',
@@ -51,5 +53,20 @@ class User extends Authenticatable
     public function getPhotoUrlAttribute(): ?string
     {
         return MediaUrl::toUrl($this->photo);
+    }
+
+    public function deviceTokens()
+    {
+        return $this->hasMany(DeviceToken::class);
+    }
+
+    public function appNotifications()
+    {
+        return $this->hasMany(AppNotification::class);
+    }
+
+    public function notificationPreference()
+    {
+        return $this->hasOne(NotificationPreference::class);
     }
 }

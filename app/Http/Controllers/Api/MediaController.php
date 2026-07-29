@@ -14,8 +14,10 @@ use App\Models\JobPost;
 use App\Models\MarketplaceItem;
 use App\Models\CarRental;
 use App\Models\MediaAsset;
+use App\Models\News;
 use App\Models\Property;
 use App\Models\Teacher;
+use App\Models\UpdatePost;
 use App\Models\User;
 use App\Models\Worker;
 use App\Support\MediaUrl;
@@ -43,13 +45,15 @@ class MediaController extends Controller
         'marketplace_item' => MarketplaceItem::class,
         'property' => Property::class,
         'job_post' => JobPost::class,
+        'news' => News::class,
+        'update_post' => UpdatePost::class,
     ];
 
     public function upload(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'section' => ['required', 'string', 'max:80'],
-            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,hotel,restaurant,education,car_rental,teacher,marketplace_item,property,job_post'],
+            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,hotel,restaurant,education,car_rental,teacher,marketplace_item,property,job_post,news,update_post'],
             'target_id' => ['required', 'integer', 'min:1'],
             'images' => ['required', 'array', 'min:1', 'max:10'],
             'images.*' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
@@ -112,7 +116,7 @@ class MediaController extends Controller
     public function list(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,hotel,restaurant,education,car_rental,teacher,marketplace_item,property,job_post'],
+            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,hotel,restaurant,education,car_rental,teacher,marketplace_item,property,job_post,news,update_post'],
             'target_id' => ['required', 'integer', 'min:1'],
         ]);
 
@@ -214,7 +218,7 @@ class MediaController extends Controller
         }
 
         $user = $request->user();
-        if ($user->role === 'admin') {
+        if ($user instanceof \App\Models\Admin || $user->role === 'admin') {
             return $target;
         }
 

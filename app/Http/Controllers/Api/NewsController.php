@@ -12,7 +12,7 @@ class NewsController extends Controller
 {
     public function index(): JsonResponse
     {
-        $news = News::query()->latest()->paginate(20);
+        $news = News::query()->latest()->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
         $map = MediaLookup::primaryUrlMap('news', array_column($news->items(), 'id'));
 
         $news->setCollection(

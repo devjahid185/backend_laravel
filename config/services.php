@@ -35,4 +35,22 @@ return [
         ],
     ],
 
+    'mram_sms' => [
+        'enabled' => env('MRAM_SMS_ENABLED', false),
+        'api_key' => env('MRAM_SMS_API_KEY'),
+        'sender_id' => env('MRAM_SMS_SENDER_ID'),
+        'label' => env('MRAM_SMS_LABEL', 'transactional'),
+        'type' => env('MRAM_SMS_TYPE', 'unicode'),
+        'api_url' => env('MRAM_SMS_API_URL', 'https://sms.mram.com.bd/smsapi'),
+    ],
+
+    'google' => [
+        'client_ids' => env('GOOGLE_CLIENT_IDS'),
+    ],
+
+    'fcm' => [
+        'service_account_path' => env('FCM_SERVICE_ACCOUNT_PATH'),
+        'project_id' => env('FCM_PROJECT_ID'),
+    ],
+
 ];

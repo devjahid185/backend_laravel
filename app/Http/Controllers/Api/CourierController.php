@@ -39,7 +39,7 @@ class CourierController extends Controller
             }))
             ->where('status', 'active')
             ->orderBy('name')
-            ->paginate(20);
+            ->paginate((int) min(max((int) request()->query('per_page', 50), 1), 100));
 
         $companyMap = CourierCompany::query()->pluck('name', 'id')->all();
         $offices->setCollection(
