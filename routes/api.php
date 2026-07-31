@@ -8,10 +8,12 @@ use App\Http\Controllers\Api\AdminResourceController;
 use App\Http\Controllers\Api\AdminReviewController;
 use App\Http\Controllers\Api\AdminDashboardController;
 use App\Http\Controllers\Api\AdminEmailSettingController;
+use App\Http\Controllers\Api\AdminFoodDeliverySettingController;
 use App\Http\Controllers\Api\AdminNotificationController;
 use App\Http\Controllers\Api\AdminProfileController;
 use App\Http\Controllers\Api\AdminSmsSettingController;
 use App\Http\Controllers\Api\AdminUserController;
+use App\Http\Controllers\Api\AppVisitController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BloodDonorController;
 use App\Http\Controllers\Api\BloodRequestController;
@@ -25,6 +27,8 @@ use App\Http\Controllers\Api\DoctorAppointmentController;
 use App\Http\Controllers\Api\DoctorController;
 use App\Http\Controllers\Api\ElectricityOfficeController;
 use App\Http\Controllers\Api\FaqController;
+use App\Http\Controllers\Api\FoodDeliveryController;
+use App\Http\Controllers\Api\HomeBannerController;
 use App\Http\Controllers\Api\HospitalController;
 use App\Http\Controllers\Api\HotelController;
 use App\Http\Controllers\Api\RestaurantController;
@@ -56,6 +60,7 @@ Route::post('/request-otp', [AuthController::class, 'requestOtp']);
 Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
 Route::post('/register-otp', [AuthController::class, 'registerWithOtp']);
 Route::post('/reset-password', [AuthController::class, 'resetPasswordWithOtp']);
+Route::get('/home-banners', [HomeBannerController::class, 'active']);
 
 Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::get('/admin/me', [AdminAuthController::class, 'me']);
@@ -72,6 +77,12 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::get('/admin/email-settings', [AdminEmailSettingController::class, 'show']);
     Route::put('/admin/email-settings', [AdminEmailSettingController::class, 'update']);
     Route::post('/admin/email-settings/test', [AdminEmailSettingController::class, 'test']);
+    Route::get('/admin/food-delivery-settings', [AdminFoodDeliverySettingController::class, 'show']);
+    Route::put('/admin/food-delivery-settings', [AdminFoodDeliverySettingController::class, 'update']);
+    Route::get('/admin/home-banners', [HomeBannerController::class, 'adminIndex']);
+    Route::post('/admin/home-banners', [HomeBannerController::class, 'adminStore']);
+    Route::put('/admin/home-banners/{id}', [HomeBannerController::class, 'adminUpdate'])->whereNumber('id');
+    Route::delete('/admin/home-banners/{id}', [HomeBannerController::class, 'adminDestroy'])->whereNumber('id');
 
     Route::get('/admin/users', [AdminUserController::class, 'index']);
     Route::post('/admin/users', [AdminUserController::class, 'store']);
@@ -101,6 +112,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/profile', [AuthController::class, 'profile']);
     Route::post('/update-profile', [AuthController::class, 'updateProfile']);
+    Route::post('/app-visit', [AppVisitController::class, 'store']);
     Route::post('/profile/photo', [MediaController::class, 'uploadProfilePhoto']);
     Route::post('/device-token', [DeviceTokenController::class, 'store']);
     Route::delete('/device-token', [DeviceTokenController::class, 'destroy']);
@@ -251,6 +263,40 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/restaurants/{id}', [RestaurantController::class, 'show'])->whereNumber('id');
     Route::post('/restaurants/register', [RestaurantController::class, 'register']);
     Route::get('/restaurants/my', [RestaurantController::class, 'myRestaurants']);
+
+    Route::prefix('food')->group(function (): void {
+        Route::get('/home', [FoodDeliveryController::class, 'home']);
+        Route::get('/restaurants', [FoodDeliveryController::class, 'restaurants']);
+        Route::get('/restaurants/{id}', [FoodDeliveryController::class, 'restaurant'])->whereNumber('id');
+        Route::get('/items/{id}', [FoodDeliveryController::class, 'item'])->whereNumber('id');
+        Route::get('/owner/dashboard', [FoodDeliveryController::class, 'ownerDashboard']);
+        Route::get('/owner/restaurants', [FoodDeliveryController::class, 'ownerRestaurants']);
+        Route::post('/owner/restaurants', [FoodDeliveryController::class, 'saveOwnerRestaurant']);
+        Route::get('/owner/items', [FoodDeliveryController::class, 'ownerItems']);
+        Route::post('/owner/items', [FoodDeliveryController::class, 'saveOwnerItem']);
+        Route::delete('/owner/items/{id}', [FoodDeliveryController::class, 'deleteOwnerItem'])->whereNumber('id');
+        Route::get('/owner/orders', [FoodDeliveryController::class, 'ownerOrders']);
+        Route::get('/owner/reviews', [FoodDeliveryController::class, 'ownerReviews']);
+        Route::post('/owner/reviews/{id}/reply', [FoodDeliveryController::class, 'ownerReplyReview'])->whereNumber('id');
+        Route::get('/addresses', [FoodDeliveryController::class, 'addresses']);
+        Route::post('/addresses', [FoodDeliveryController::class, 'saveAddress']);
+        Route::delete('/addresses/{id}', [FoodDeliveryController::class, 'deleteAddress'])->whereNumber('id');
+        Route::get('/cart-count', [FoodDeliveryController::class, 'cartCount']);
+        Route::get('/cart', [FoodDeliveryController::class, 'cart']);
+        Route::post('/cart/items', [FoodDeliveryController::class, 'addToCart']);
+        Route::post('/cart/items/{id}', [FoodDeliveryController::class, 'updateCartItem'])->whereNumber('id');
+        Route::delete('/cart/items/{id}', [FoodDeliveryController::class, 'removeCartItem'])->whereNumber('id');
+        Route::delete('/cart', [FoodDeliveryController::class, 'clearCart']);
+        Route::post('/checkout', [FoodDeliveryController::class, 'checkout']);
+        Route::get('/orders', [FoodDeliveryController::class, 'orders']);
+        Route::get('/orders/{id}', [FoodDeliveryController::class, 'order'])->whereNumber('id');
+        Route::post('/orders/{id}/cancel', [FoodDeliveryController::class, 'cancelOrder'])->whereNumber('id');
+        Route::post('/orders/{id}/status', [FoodDeliveryController::class, 'updateOrderStatus'])->whereNumber('id');
+        Route::get('/favorites', [FoodDeliveryController::class, 'favorites']);
+        Route::post('/favorites/toggle', [FoodDeliveryController::class, 'toggleFavorite']);
+        Route::get('/reviews', [FoodDeliveryController::class, 'reviews']);
+        Route::post('/reviews', [FoodDeliveryController::class, 'review']);
+    });
 
     Route::get('/education/categories', [EducationController::class, 'categories']);
     Route::get('/education', [EducationController::class, 'index']);

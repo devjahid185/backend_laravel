@@ -13,6 +13,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -49,6 +50,36 @@ class AuthController extends Controller
             'phone' => ['required', 'string', 'max:20'],
             'purpose' => ['required', 'in:register,reset,login'],
         ]);
+
+        $userExists = User::query()->where('phone', $validated['phone'])->exists();
+        if (in_array($validated['purpose'], ['reset', 'login'], true) && ! $userExists) {
+            throw ValidationException::withMessages([
+                'phone' => ['No account found with this phone number.'],
+            ]);
+        }
+
+        if ($validated['purpose'] === 'register' && $userExists) {
+            throw ValidationException::withMessages([
+                'phone' => ['This phone number is already registered.'],
+            ]);
+        }
+
+        $cooldownKey = $this->otpThrottleKey('otp-request-cooldown', $validated['phone'], $validated['purpose'], $request->ip());
+        if (RateLimiter::tooManyAttempts($cooldownKey, 1)) {
+            return response()->json([
+                'message' => 'Please wait '.RateLimiter::availableIn($cooldownKey).' seconds before requesting another OTP.',
+            ], 429);
+        }
+
+        $burstKey = $this->otpThrottleKey('otp-request-burst', $validated['phone'], $validated['purpose'], $request->ip());
+        if (RateLimiter::tooManyAttempts($burstKey, 5)) {
+            return response()->json([
+                'message' => 'Too many OTP requests. Please try again after '.ceil(RateLimiter::availableIn($burstKey) / 60).' minutes.',
+            ], 429);
+        }
+
+        RateLimiter::hit($cooldownKey, 60);
+        RateLimiter::hit($burstKey, 15 * 60);
 
         PhoneOtp::query()
             ->where('phone', $validated['phone'])
@@ -114,11 +145,13 @@ class AuthController extends Controller
             'otp' => ['required', 'string', 'size:6'],
         ]);
 
-        $otp = $this->consumeOtp($validated['phone'], $validated['purpose'], $validated['otp']);
+        $otp = $validated['purpose'] === 'reset'
+            ? $this->verifyOtpWithoutConsuming($validated['phone'], $validated['purpose'], $validated['otp'])
+            : $this->consumeOtp($validated['phone'], $validated['purpose'], $validated['otp']);
 
         return response()->json([
             'message' => 'OTP verified',
-            'verified_at' => $otp->consumed_at,
+            'verified_at' => $validated['purpose'] === 'reset' ? now() : $otp->consumed_at,
         ]);
     }
 
@@ -282,6 +315,8 @@ class AuthController extends Controller
 
     private function consumeOtp(string $phone, string $purpose, string $code): PhoneOtp
     {
+        $this->ensureOtpAttemptsAllowed($phone, $purpose);
+
         $otp = PhoneOtp::query()
             ->where('phone', $phone)
             ->where('purpose', $purpose)
@@ -290,20 +325,73 @@ class AuthController extends Controller
             ->first();
 
         if (! $otp || $otp->code !== $code) {
+            $this->hitOtpAttempt($phone, $purpose);
             throw ValidationException::withMessages([
                 'otp' => ['Invalid OTP.'],
             ]);
         }
 
         if ($otp->expires_at->isPast()) {
+            $this->hitOtpAttempt($phone, $purpose);
             throw ValidationException::withMessages([
                 'otp' => ['OTP expired.'],
             ]);
         }
 
         $otp->update(['consumed_at' => Carbon::now()]);
+        RateLimiter::clear($this->otpThrottleKey('otp-verify', $phone, $purpose));
 
         return $otp;
+    }
+
+    private function verifyOtpWithoutConsuming(string $phone, string $purpose, string $code): PhoneOtp
+    {
+        $this->ensureOtpAttemptsAllowed($phone, $purpose);
+
+        $otp = PhoneOtp::query()
+            ->where('phone', $phone)
+            ->where('purpose', $purpose)
+            ->whereNull('consumed_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $otp || $otp->code !== $code) {
+            $this->hitOtpAttempt($phone, $purpose);
+            throw ValidationException::withMessages([
+                'otp' => ['Invalid OTP.'],
+            ]);
+        }
+
+        if ($otp->expires_at->isPast()) {
+            $this->hitOtpAttempt($phone, $purpose);
+            throw ValidationException::withMessages([
+                'otp' => ['OTP expired.'],
+            ]);
+        }
+
+        RateLimiter::clear($this->otpThrottleKey('otp-verify', $phone, $purpose));
+
+        return $otp;
+    }
+
+    private function ensureOtpAttemptsAllowed(string $phone, string $purpose): void
+    {
+        $key = $this->otpThrottleKey('otp-verify', $phone, $purpose);
+        if (RateLimiter::tooManyAttempts($key, 5)) {
+            throw ValidationException::withMessages([
+                'otp' => ['Too many invalid attempts. Please request a new OTP after '.ceil(RateLimiter::availableIn($key) / 60).' minutes.'],
+            ]);
+        }
+    }
+
+    private function hitOtpAttempt(string $phone, string $purpose): void
+    {
+        RateLimiter::hit($this->otpThrottleKey('otp-verify', $phone, $purpose), 10 * 60);
+    }
+
+    private function otpThrottleKey(string $prefix, string $phone, string $purpose, ?string $ip = null): string
+    {
+        return $prefix.':'.sha1($purpose.'|'.$phone.'|'.($ip ?? ''));
     }
 
     private function googleClientIds(): array

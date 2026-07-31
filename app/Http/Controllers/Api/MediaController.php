@@ -6,6 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\BloodDonor;
 use App\Models\Doctor;
+use App\Models\FoodBanner;
+use App\Models\FoodCategory;
+use App\Models\FoodItem;
+use App\Models\HomeBanner;
 use App\Models\Hotel;
 use App\Models\Hospital;
 use App\Models\EducationInstitute;
@@ -47,13 +51,17 @@ class MediaController extends Controller
         'job_post' => JobPost::class,
         'news' => News::class,
         'update_post' => UpdatePost::class,
+        'food_category' => FoodCategory::class,
+        'food_banner' => FoodBanner::class,
+        'food_item' => FoodItem::class,
+        'home_banner' => HomeBanner::class,
     ];
 
     public function upload(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'section' => ['required', 'string', 'max:80'],
-            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,hotel,restaurant,education,car_rental,teacher,marketplace_item,property,job_post,news,update_post'],
+            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,hotel,restaurant,education,car_rental,teacher,marketplace_item,property,job_post,news,update_post,food_category,food_banner,food_item,home_banner'],
             'target_id' => ['required', 'integer', 'min:1'],
             'images' => ['required', 'array', 'min:1', 'max:10'],
             'images.*' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
@@ -116,7 +124,7 @@ class MediaController extends Controller
     public function list(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,hotel,restaurant,education,car_rental,teacher,marketplace_item,property,job_post,news,update_post'],
+            'target_type' => ['required', 'in:user,worker,business,blood_donor,doctor,hospital,hotel,restaurant,education,car_rental,teacher,marketplace_item,property,job_post,news,update_post,food_category,food_banner,food_item,home_banner'],
             'target_id' => ['required', 'integer', 'min:1'],
         ]);
 
@@ -225,6 +233,7 @@ class MediaController extends Controller
         return match ($targetType) {
             'user' => $target->id === $user->id ? $target : null,
             'worker', 'business', 'blood_donor', 'doctor', 'hospital', 'hotel', 'restaurant', 'education', 'teacher', 'marketplace_item', 'property' => (int) $target->user_id === (int) $user->id ? $target : null,
+            'food_item' => (int) $target->restaurant?->user_id === (int) $user->id ? $target : null,
             'job_post' => (int) $target->posted_by === (int) $user->id ? $target : null,
             default => null,
         };

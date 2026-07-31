@@ -15,7 +15,19 @@ class Restaurant extends Model
         'cuisines' => 'array',
         'features' => 'array',
         'delivery_available' => 'boolean',
+        'accepts_food_orders' => 'boolean',
         'takeaway_available' => 'boolean',
         'dine_in_available' => 'boolean',
+        'service_radius_km' => 'decimal:2',
     ];
+
+    public function foodItems()
+    {
+        return $this->hasMany(FoodItem::class);
+    }
+
+    public function foodOrders()
+    {
+        return $this->hasMany(FoodOrder::class);
+    }
 }

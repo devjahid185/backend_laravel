@@ -24,6 +24,7 @@ class DatabaseSeeder extends Seeder
             HotelSeeder::class,
             RestaurantCategorySeeder::class,
             RestaurantSeeder::class,
+            FoodDeliverySeeder::class,
             EducationCategorySeeder::class,
             EducationSeeder::class,
             LaunchSeeder::class,

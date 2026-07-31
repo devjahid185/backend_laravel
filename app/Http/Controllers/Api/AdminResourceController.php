@@ -15,6 +15,13 @@ use App\Models\EducationCategory;
 use App\Models\ElectricityOffice;
 use App\Models\EmergencyContact;
 use App\Models\Faq;
+use App\Models\FoodAddress;
+use App\Models\FoodBanner;
+use App\Models\FoodCategory;
+use App\Models\FoodCoupon;
+use App\Models\FoodItem;
+use App\Models\FoodOrder;
+use App\Models\FoodReview;
 use App\Models\Hospital;
 use App\Models\HospitalCategory;
 use App\Models\Hotel;
@@ -50,6 +57,13 @@ class AdminResourceController extends Controller
         'hospitals' => Hospital::class,
         'hotels' => Hotel::class,
         'restaurants' => Restaurant::class,
+        'food-categories' => FoodCategory::class,
+        'food-banners' => FoodBanner::class,
+        'food-items' => FoodItem::class,
+        'food-addresses' => FoodAddress::class,
+        'food-coupons' => FoodCoupon::class,
+        'food-orders' => FoodOrder::class,
+        'food-reviews' => FoodReview::class,
         'property' => Property::class,
         'education' => EducationInstitute::class,
         'blood' => BloodDonor::class,
@@ -113,7 +127,16 @@ class AdminResourceController extends Controller
             return response()->json(['message' => 'Resource not supported.'], 422);
         }
 
-        $record = $model::query()->findOrFail($id);
+        $query = $model::query();
+        if ($resource === 'food-orders') {
+            $query->with([
+                'items',
+                'restaurant:id,name,phone,address',
+                'address',
+            ]);
+        }
+
+        $record = $query->findOrFail($id);
 
         return response()->json($record);
     }
@@ -175,7 +198,7 @@ class AdminResourceController extends Controller
     private function applySearch($query, string $model, string $search): void
     {
         $table = (new $model)->getTable();
-        $candidates = ['name', 'title', 'phone', 'email', 'address', 'district', 'upazila', 'status', 'operator_name', 'route_from', 'route_to', 'hotline'];
+        $candidates = ['name', 'title', 'phone', 'email', 'address', 'district', 'upazila', 'area', 'status', 'order_no', 'receiver_phone', 'operator_name', 'route_from', 'route_to', 'hotline'];
         $columns = Schema::getColumnListing($table);
         $available = array_values(array_intersect($candidates, $columns));
         if (! $available) {

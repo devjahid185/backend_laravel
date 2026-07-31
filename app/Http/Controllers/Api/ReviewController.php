@@ -193,7 +193,7 @@ class ReviewController extends Controller
             ->where('id', $validated['target_id'])
             ->value('user_id');
         if ($workerOwnerId === $request->user()->id) {
-            return response()->json(['message' => 'নিজের কর্মী প্রোফাইলে রেটিং দেওয়া যাবে না'], 403);
+            return response()->json(['message' => 'নিজের কর্মী প্রোফাইলে রেটিং দেওয়া যাবে না'], 403);
         }
 
         $review = Review::query()->updateOrCreate(
@@ -221,7 +221,7 @@ class ReviewController extends Controller
         }
 
         return response()->json([
-            'message' => '????? ??? ?????',
+            'message' => 'রেটিং জমা হয়েছে',
             'review' => $review,
             'average_rating' => round((float) $avgRating, 2),
         ]);
@@ -239,7 +239,7 @@ class ReviewController extends Controller
             ->where('id', $validated['target_id'])
             ->value('user_id');
         if ($businessOwnerId === $request->user()->id) {
-            return response()->json(['message' => 'নিজের ব্যবসায় রেটিং দেওয়া যাবে না'], 403);
+            return response()->json(['message' => 'নিজের ব্যবসায় রেটিং দেওয়া যাবে না'], 403);
         }
 
         $review = Review::query()->updateOrCreate(
@@ -264,7 +264,7 @@ class ReviewController extends Controller
             ->update(['rating' => round((float) $avgRating, 2)]);
 
         return response()->json([
-            'message' => '????? ??? ?????',
+            'message' => 'রেটিং জমা হয়েছে',
             'review' => $review,
             'average_rating' => round((float) $avgRating, 2),
         ]);
@@ -282,7 +282,7 @@ class ReviewController extends Controller
             ->where('id', $validated['target_id'])
             ->value('user_id');
         if ($hospitalOwnerId === $request->user()->id) {
-            return response()->json(['message' => 'নিজের হাসপাতাল প্রোফাইলে রেটিং দেওয়া যাবে না'], 403);
+            return response()->json(['message' => 'নিজের হাসপাতাল প্রোফাইলে রেটিং দেওয়া যাবে না'], 403);
         }
 
         $review = Review::query()->updateOrCreate(
@@ -307,7 +307,7 @@ class ReviewController extends Controller
             ->update(['rating' => round((float) $avgRating, 2)]);
 
         return response()->json([
-            'message' => 'রেটিং জমা হয়েছে',
+            'message' => 'রেটিং জমা হয়েছে',
             'review' => $review,
             'average_rating' => round((float) $avgRating, 2),
         ]);
@@ -325,7 +325,7 @@ class ReviewController extends Controller
             ->where('id', $validated['target_id'])
             ->value('user_id');
         if ($ownerId === $request->user()->id) {
-            return response()->json(['message' => 'নিজের গাড়িতে রেটিং দেওয়া যাবে না'], 403);
+            return response()->json(['message' => 'নিজের গাড়িতে রেটিং দেওয়া যাবে না'], 403);
         }
 
         $review = Review::query()->updateOrCreate(
@@ -350,7 +350,7 @@ class ReviewController extends Controller
             ->update(['rating' => round((float) $avgRating, 2)]);
 
         return response()->json([
-            'message' => 'রেটিং জমা হয়েছে',
+            'message' => 'রেটিং জমা হয়েছে',
             'review' => $review,
             'average_rating' => round((float) $avgRating, 2),
         ]);
@@ -368,7 +368,7 @@ class ReviewController extends Controller
             ->where('id', $validated['target_id'])
             ->value('user_id');
         if ($ownerId && $ownerId === $request->user()->id) {
-            return response()->json(['message' => 'নিজের অফিসে রেটিং দেওয়া যাবে না'], 403);
+            return response()->json(['message' => 'নিজের অফিসে রেটিং দেওয়া যাবে না'], 403);
         }
 
         $review = Review::query()->updateOrCreate(
@@ -393,7 +393,7 @@ class ReviewController extends Controller
             ->update(['rating' => round((float) $avgRating, 2)]);
 
         return response()->json([
-            'message' => 'রেটিং জমা হয়েছে',
+            'message' => 'রেটিং জমা হয়েছে',
             'review' => $review,
             'average_rating' => round((float) $avgRating, 2),
         ]);
@@ -410,7 +410,7 @@ class ReviewController extends Controller
             ->where('id', $validated['target_id'])
             ->value('user_id');
         if ($ownerId && $ownerId === $request->user()->id) {
-            return response()->json(['message' => 'à¦¨à¦¿à¦œà§‡à¦° à¦Ÿà¦¿à¦‰à¦Ÿà¦° à¦ªà§à¦°à§‹à¦«à¦¾à¦‡à¦²à§‡ à¦°à§‡à¦Ÿà¦¿à¦‚ à¦¦à§‡à¦“à§Ÿà¦¾ à¦¯à¦¾à¦¬à§‡ à¦¨à¦¾'], 403);
+            return response()->json(['message' => 'নিজের টিউটর প্রোফাইলে রেটিং দেওয়া যাবে না'], 403);
         }
 
         $review = Review::query()->updateOrCreate(
@@ -435,7 +435,7 @@ class ReviewController extends Controller
             ->update(['rating' => round((float) $avgRating, 2)]);
 
         return response()->json([
-            'message' => 'à¦°à§‡à¦Ÿà¦¿à¦‚ à¦œà¦®à¦¾ à¦¹à§Ÿà§‡à¦›à§‡',
+            'message' => 'রেটিং জমা হয়েছে',
             'review' => $review,
             'average_rating' => round((float) $avgRating, 2),
         ]);
@@ -452,7 +452,7 @@ class ReviewController extends Controller
             ->where('id', $validated['target_id'])
             ->value('user_id');
         if ($ownerId && $ownerId === $request->user()->id) {
-            return response()->json(['message' => 'নিজের হোটেলে রেটিং দেওয়া যাবে না'], 403);
+            return response()->json(['message' => 'নিজের হোটেলে রেটিং দেওয়া যাবে না'], 403);
         }
 
         $review = Review::query()->updateOrCreate(
@@ -477,7 +477,7 @@ class ReviewController extends Controller
             ->update(['rating' => round((float) $avgRating, 2)]);
 
         return response()->json([
-            'message' => 'রেটিং জমা হয়েছে',
+            'message' => 'রেটিং জমা হয়েছে',
             'review' => $review,
             'average_rating' => round((float) $avgRating, 2),
         ]);
@@ -494,7 +494,7 @@ class ReviewController extends Controller
             ->where('id', $validated['target_id'])
             ->value('user_id');
         if ($ownerId && $ownerId === $request->user()->id) {
-            return response()->json(['message' => 'নিজের রেস্টুরেন্টে রেটিং দেওয়া যাবে না'], 403);
+            return response()->json(['message' => 'নিজের রেস্টুরেন্টে রেটিং দেওয়া যাবে না'], 403);
         }
 
         $review = Review::query()->updateOrCreate(
@@ -519,7 +519,7 @@ class ReviewController extends Controller
             ->update(['rating' => round((float) $avgRating, 2)]);
 
         return response()->json([
-            'message' => 'রেটিং জমা হয়েছে',
+            'message' => 'রেটিং জমা হয়েছে',
             'review' => $review,
             'average_rating' => round((float) $avgRating, 2),
         ]);
@@ -537,7 +537,7 @@ class ReviewController extends Controller
             ->where('id', $validated['target_id'])
             ->value('user_id');
         if ($ownerId && $ownerId === $request->user()->id) {
-            return response()->json(['message' => 'নিজের প্রতিষ্ঠানে রেটিং দেওয়া যাবে না'], 403);
+            return response()->json(['message' => 'নিজের প্রতিষ্ঠানে রেটিং দেওয়া যাবে না'], 403);
         }
 
         $review = Review::query()->updateOrCreate(
@@ -562,7 +562,7 @@ class ReviewController extends Controller
             ->update(['rating' => round((float) $avgRating, 2)]);
 
         return response()->json([
-            'message' => 'রেটিং জমা হয়েছে',
+            'message' => 'রেটিং জমা হয়েছে',
             'review' => $review,
             'average_rating' => round((float) $avgRating, 2),
         ]);
