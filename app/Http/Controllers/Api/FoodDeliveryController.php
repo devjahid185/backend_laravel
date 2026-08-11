@@ -126,7 +126,7 @@ class FoodDeliveryController extends Controller
                 'completed_orders' => (clone $orders)->where('status', 'delivered')->count(),
                 'sales_total' => (float) (clone $orders)->where('status', 'delivered')->sum('grand_total'),
             ],
-            'recent_orders' => FoodOrder::query()->with('items', 'restaurant:id,name')->whereIn('restaurant_id', $restaurantIds)->latest()->limit(10)->get(),
+            'recent_orders' => FoodOrder::query()->with('items', 'restaurant:id,name,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')->whereIn('restaurant_id', $restaurantIds)->latest()->limit(10)->get(),
             'recent_reviews' => $this->foodReviewQuery()
                 ->whereIn('restaurant_id', $restaurantIds)
                 ->latest()
@@ -458,7 +458,7 @@ class FoodDeliveryController extends Controller
                 FoodOrderItem::query()->create($itemPayload);
             }
             $cart->items()->delete();
-            return $order->load('items', 'restaurant:id,name,phone,address');
+            return $order->load('items', 'restaurant:id,name,phone,address,lat,lng');
         });
         $this->notifyRestaurantOwner($order);
         return response()->json(['message' => 'Order placed', 'order' => $order], 201);
@@ -466,13 +466,13 @@ class FoodDeliveryController extends Controller
 
     public function orders(Request $request): JsonResponse
     {
-        return response()->json(FoodOrder::query()->with('restaurant:id,name,phone,address')->where('user_id', $request->user()->id)->latest()->paginate(20));
+        return response()->json(FoodOrder::query()->with('restaurant:id,name,phone,address,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')->where('user_id', $request->user()->id)->latest()->paginate(20));
     }
 
     public function order(Request $request, int $id): JsonResponse
     {
         $order = FoodOrder::query()
-            ->with('items', 'restaurant:id,name,phone,address,opening_hours')
+            ->with('items', 'restaurant:id,name,phone,address,opening_hours,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
             ->where('user_id', $request->user()->id)
             ->findOrFail($id);
         $order->review = $this->foodReviewQuery()
