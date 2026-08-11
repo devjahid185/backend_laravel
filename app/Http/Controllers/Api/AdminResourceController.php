@@ -38,6 +38,12 @@ use App\Models\Property;
 use App\Models\PropertyCategory;
 use App\Models\Restaurant;
 use App\Models\RestaurantCategory;
+use App\Models\Rider;
+use App\Models\RiderDocument;
+use App\Models\RiderLocation;
+use App\Models\RiderRating;
+use App\Models\RiderSupportTicket;
+use App\Models\RiderWalletEntry;
 use App\Models\UpdatePost;
 use App\Models\Worker;
 use App\Models\WorkerCategory;
@@ -64,6 +70,12 @@ class AdminResourceController extends Controller
         'food-coupons' => FoodCoupon::class,
         'food-orders' => FoodOrder::class,
         'food-reviews' => FoodReview::class,
+        'riders' => Rider::class,
+        'rider-documents' => RiderDocument::class,
+        'rider-wallet' => RiderWalletEntry::class,
+        'rider-locations' => RiderLocation::class,
+        'rider-ratings' => RiderRating::class,
+        'rider-support-tickets' => RiderSupportTicket::class,
         'property' => Property::class,
         'education' => EducationInstitute::class,
         'blood' => BloodDonor::class,
@@ -133,7 +145,11 @@ class AdminResourceController extends Controller
                 'items',
                 'restaurant:id,name,phone,address',
                 'address',
+                'rider:id,name,phone,availability_status,account_status',
             ]);
+        }
+        if ($resource === 'riders') {
+            $query->with(['documents', 'user:id,name,phone,email']);
         }
 
         $record = $query->findOrFail($id);
@@ -198,7 +214,7 @@ class AdminResourceController extends Controller
     private function applySearch($query, string $model, string $search): void
     {
         $table = (new $model)->getTable();
-        $candidates = ['name', 'title', 'phone', 'email', 'address', 'district', 'upazila', 'area', 'status', 'order_no', 'receiver_phone', 'operator_name', 'route_from', 'route_to', 'hotline'];
+        $candidates = ['name', 'title', 'phone', 'email', 'address', 'district', 'upazila', 'area', 'status', 'order_no', 'receiver_phone', 'operator_name', 'route_from', 'route_to', 'hotline', 'vehicle_number', 'kyc_status', 'account_status', 'availability_status', 'subject'];
         $columns = Schema::getColumnListing($table);
         $available = array_values(array_intersect($candidates, $columns));
         if (! $available) {

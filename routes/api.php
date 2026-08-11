@@ -49,6 +49,7 @@ use App\Http\Controllers\Api\NotificationPreferenceController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\PropertyController;
 use App\Http\Controllers\Api\ReviewController;
+use App\Http\Controllers\Api\RiderController;
 use App\Http\Controllers\Api\WorkerController;
 use Illuminate\Support\Facades\Route;
 
@@ -108,7 +109,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::put('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'update'])->whereNumber('id');
     Route::delete('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'destroy'])->whereNumber('id');
 });
-Route::middleware('auth:sanctum')->group(function (): void {
+    Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/profile', [AuthController::class, 'profile']);
     Route::post('/update-profile', [AuthController::class, 'updateProfile']);
@@ -160,6 +161,24 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/reviews/teacher/{id}', [ReviewController::class, 'teacherReviews']);
     Route::post('/reviews/restaurant', [ReviewController::class, 'rateRestaurant']);
     Route::get('/reviews/restaurant/{id}', [ReviewController::class, 'restaurantReviews']);
+
+    Route::prefix('riders')->group(function (): void {
+        Route::get('/profile', [RiderController::class, 'profile']);
+        Route::post('/register', [RiderController::class, 'register']);
+        Route::post('/documents', [RiderController::class, 'uploadDocument']);
+        Route::post('/agreement/accept', [RiderController::class, 'acceptAgreement']);
+        Route::get('/dashboard', [RiderController::class, 'dashboard']);
+        Route::post('/availability', [RiderController::class, 'availability']);
+        Route::post('/location', [RiderController::class, 'updateLocation']);
+        Route::get('/orders', [RiderController::class, 'orders']);
+        Route::post('/orders/{id}/accept', [RiderController::class, 'acceptOrder'])->whereNumber('id');
+        Route::post('/orders/{id}/reject', [RiderController::class, 'rejectOrder'])->whereNumber('id');
+        Route::post('/orders/{id}/status', [RiderController::class, 'updateOrderStatus'])->whereNumber('id');
+        Route::get('/wallet', [RiderController::class, 'wallet']);
+        Route::get('/support-tickets', [RiderController::class, 'supportTickets']);
+        Route::post('/support-tickets', [RiderController::class, 'createSupportTicket']);
+        Route::post('/{id}/rate', [RiderController::class, 'rate'])->whereNumber('id');
+    });
     Route::post('/reviews/education', [ReviewController::class, 'rateEducation']);
     Route::get('/reviews/education/{id}', [ReviewController::class, 'educationReviews']);
 
@@ -337,6 +356,5 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/payment/verify', [PaymentController::class, 'verify']);
 
 });
-
 
 

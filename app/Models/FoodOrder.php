@@ -24,6 +24,11 @@ class FoodOrder extends Model
         return $this->belongsTo(Restaurant::class);
     }
 
+    public function rider()
+    {
+        return $this->belongsTo(Rider::class);
+    }
+
     public function address()
     {
         return $this->belongsTo(FoodAddress::class, 'food_address_id');
