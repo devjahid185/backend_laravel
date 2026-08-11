@@ -19,6 +19,8 @@ use App\Models\FoodOrderItem;
 use App\Models\FoodReview;
 use App\Models\Restaurant;
 use App\Models\RestaurantCategory;
+use App\Models\Rider;
+use App\Models\RiderOrderRequest;
 use App\Services\FcmService;
 use App\Support\MediaLookup;
 use Illuminate\Http\JsonResponse;
@@ -502,6 +504,9 @@ class FoodDeliveryController extends Controller
         if ($data['status'] === 'accepted') $order->accepted_at = now();
         if ($data['status'] === 'delivered') $order->delivered_at = now();
         $order->save();
+        if ($data['status'] === 'accepted') {
+            $this->dispatchOrderToNearbyRiders($order->fresh('restaurant'));
+        }
         $this->notifyFoodOrderCustomer($order->fresh('restaurant'));
         return response()->json(['message' => 'Order updated', 'order' => $order]);
     }
@@ -889,6 +894,116 @@ class FoodDeliveryController extends Controller
             'restaurant_id' => $order->restaurant_id,
             'screen' => 'food_order_details',
         ]);
+    }
+
+    private function dispatchOrderToNearbyRiders(FoodOrder $order): void
+    {
+        if ($order->order_type !== 'delivery' || $order->rider_id) {
+            return;
+        }
+
+        $restaurant = $order->restaurant;
+        $originLat = $restaurant?->lat !== null ? (float) $restaurant->lat : null;
+        $originLng = $restaurant?->lng !== null ? (float) $restaurant->lng : null;
+        if ($originLat === null || $originLng === null) {
+            Log::info('Rider dispatch skipped: restaurant location missing', ['order_id' => $order->id]);
+            return;
+        }
+
+        $radiusKm = 20.0;
+        $riders = Rider::query()
+            ->where('kyc_status', 'approved')
+            ->where('account_status', 'active')
+            ->where('agreement_accepted', true)
+            ->where('availability_status', 'online')
+            ->whereNotNull('last_lat')
+            ->whereNotNull('last_lng')
+            ->where(function ($query): void {
+                $query->whereNull('last_location_at')->orWhere('last_location_at', '>=', now()->subMinutes(30));
+            })
+            ->get()
+            ->map(function (Rider $rider) use ($originLat, $originLng): Rider {
+                $rider->dispatch_distance_km = $this->distanceKm($originLat, $originLng, (float) $rider->last_lat, (float) $rider->last_lng);
+                return $rider;
+            })
+            ->filter(fn (Rider $rider) => $rider->dispatch_distance_km <= $radiusKm)
+            ->sortBy('dispatch_distance_km')
+            ->values();
+
+        if ($riders->isEmpty()) {
+            Log::info('Rider dispatch skipped: no nearby online riders', ['order_id' => $order->id]);
+            return;
+        }
+
+        foreach ($riders as $rider) {
+            RiderOrderRequest::query()->updateOrCreate(
+                ['food_order_id' => $order->id, 'rider_id' => $rider->id],
+                [
+                    'distance_km' => round((float) $rider->dispatch_distance_km, 2),
+                    'restaurant_lat' => $originLat,
+                    'restaurant_lng' => $originLng,
+                    'status' => 'pending',
+                    'notified_at' => now(),
+                    'expires_at' => now()->addMinutes(8),
+                    'reject_reason' => null,
+                ]
+            );
+        }
+
+        $this->notifyRidersForOrder($order, $riders->pluck('id')->all());
+    }
+
+    private function notifyRidersForOrder(FoodOrder $order, array $riderIds): void
+    {
+        $userIds = Rider::query()->whereIn('id', $riderIds)->pluck('user_id')->all();
+        if (! $userIds) {
+            return;
+        }
+
+        $restaurantName = $order->restaurant?->name ?: 'রেস্টুরেন্ট';
+        $title = 'নতুন ডেলিভারি রিকোয়েস্ট';
+        $message = "{$restaurantName} থেকে {$order->order_no} অর্ডার ডেলিভারি করতে হবে।";
+
+        foreach ($userIds as $userId) {
+            AppNotification::query()->create([
+                'user_id' => $userId,
+                'title' => $title,
+                'message' => $message,
+                'data' => [
+                    'type' => 'rider_order_request',
+                    'role' => 'rider',
+                    'event' => 'new_delivery_request',
+                    'order_id' => $order->id,
+                    'order_no' => $order->order_no,
+                    'restaurant_id' => $order->restaurant_id,
+                    'screen' => 'rider_dashboard',
+                ],
+            ]);
+        }
+
+        $tokens = DeviceToken::query()->whereIn('user_id', $userIds)->pluck('token')->all();
+        if (! $tokens) {
+            return;
+        }
+
+        try {
+            app(FcmService::class)->sendToTokens($tokens, [
+                'data' => [
+                    'type' => 'rider_order_request',
+                    'role' => 'rider',
+                    'event' => 'new_delivery_request',
+                    'title' => $title,
+                    'message' => $message,
+                    'order_id' => $order->id,
+                    'order_no' => $order->order_no,
+                    'restaurant_id' => $order->restaurant_id,
+                    'screen' => 'rider_dashboard',
+                ],
+                'notification' => ['title' => $title, 'body' => $message],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Rider dispatch notification failed', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+        }
     }
 
     private function notifyUser($order, string $title, string $message, array $data = []): void

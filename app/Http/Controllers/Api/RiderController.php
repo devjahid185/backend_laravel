@@ -7,6 +7,7 @@ use App\Models\FoodOrder;
 use App\Models\Rider;
 use App\Models\RiderDocument;
 use App\Models\RiderLocation;
+use App\Models\RiderOrderRequest;
 use App\Models\RiderRating;
 use App\Models\RiderSupportTicket;
 use App\Models\RiderWalletEntry;
@@ -180,25 +181,56 @@ class RiderController extends Controller
     public function acceptOrder(Request $request, int $id): JsonResponse
     {
         $rider = $this->riderFor($request);
-        $order = FoodOrder::query()->where('rider_id', $rider->id)->findOrFail($id);
-        abort_unless(in_array($order->status, ['accepted', 'preparing'], true), 422, 'এই অর্ডার গ্রহণ করা যাবে না।');
-        $rider->update(['availability_status' => 'busy']);
-        return response()->json(['message' => 'অর্ডার গ্রহণ করা হয়েছে।', 'order' => $order->fresh()]);
+        abort_unless($rider->kyc_status === 'approved' && $rider->account_status === 'active', 422, 'অনুমোদিত রাইডার ছাড়া অর্ডার গ্রহণ করা যাবে না।');
+
+        $order = DB::transaction(function () use ($id, $rider): FoodOrder {
+            $order = FoodOrder::query()->with('restaurant')->where('id', $id)->lockForUpdate()->firstOrFail();
+            $requestRow = RiderOrderRequest::query()
+                ->where('food_order_id', $order->id)
+                ->where('rider_id', $rider->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            abort_unless($requestRow->status === 'pending', 422, 'এই ডেলিভারি রিকোয়েস্ট আর চালু নেই।');
+            abort_unless($requestRow->expires_at === null || $requestRow->expires_at->isFuture(), 422, 'এই ডেলিভারি রিকোয়েস্টের সময় শেষ।');
+            abort_unless($order->rider_id === null, 409, 'অন্য রাইডার ইতিমধ্যে অর্ডারটি নিয়েছে।');
+            abort_unless(in_array($order->status, ['accepted', 'preparing'], true), 422, 'এই অর্ডার গ্রহণ করা যাবে না।');
+
+            $earning = $this->calculateEarning($rider, $order);
+            $order->update([
+                'rider_id' => $rider->id,
+                'delivery_person_name' => $rider->name,
+                'delivery_person_phone' => $rider->phone,
+                'rider_assigned_at' => now(),
+                'rider_earning' => $earning,
+            ]);
+            $requestRow->update(['status' => 'accepted', 'responded_at' => now()]);
+            RiderOrderRequest::query()
+                ->where('food_order_id', $order->id)
+                ->where('id', '!=', $requestRow->id)
+                ->where('status', 'pending')
+                ->update(['status' => 'expired', 'responded_at' => now()]);
+            $rider->update(['availability_status' => 'busy']);
+
+            return $order->fresh(['restaurant:id,name,phone,address,lat,lng', 'items']);
+        });
+
+        return response()->json(['message' => 'অর্ডার গ্রহণ করা হয়েছে।', 'order' => $order]);
     }
 
     public function rejectOrder(Request $request, int $id): JsonResponse
     {
         $rider = $this->riderFor($request);
         $data = $request->validate(['reason' => ['nullable', 'string', 'max:160']]);
-        $order = FoodOrder::query()->where('rider_id', $rider->id)->findOrFail($id);
-        abort_unless(in_array($order->status, ['accepted', 'preparing'], true), 422, 'এই অর্ডার রিজেক্ট করা যাবে না।');
-        $order->update([
-            'rider_id' => null,
-            'delivery_person_name' => null,
-            'delivery_person_phone' => null,
-            'cancel_reason' => $data['reason'] ?? null,
-        ]);
-        $rider->update(['availability_status' => 'online']);
+        RiderOrderRequest::query()
+            ->where('food_order_id', $id)
+            ->where('rider_id', $rider->id)
+            ->where('status', 'pending')
+            ->update([
+                'status' => 'rejected',
+                'responded_at' => now(),
+                'reject_reason' => $data['reason'] ?? null,
+            ]);
         return response()->json(['message' => 'অর্ডার রিজেক্ট করা হয়েছে।']);
     }
 
@@ -304,7 +336,14 @@ class RiderController extends Controller
         }
         return FoodOrder::query()
             ->with('restaurant:id,name,phone,address,lat,lng', 'items')
-            ->where('rider_id', $rider->id)
+            ->whereIn('id', RiderOrderRequest::query()
+                ->select('food_order_id')
+                ->where('rider_id', $rider->id)
+                ->where('status', 'pending')
+                ->where(function ($query): void {
+                    $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
+                }))
+            ->whereNull('rider_id')
             ->whereIn('status', ['accepted', 'preparing'])
             ->latest()
             ->limit(20)
