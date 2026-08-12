@@ -34,7 +34,11 @@ class EmailService
 
     private function applyRuntimeConfig(EmailSetting $settings): void
     {
-        $scheme = $settings->encryption === 'starttls' ? 'tls' : $settings->encryption;
+        $scheme = match ($settings->encryption) {
+            'ssl' => 'smtps',
+            'tls', 'starttls' => 'smtp',
+            default => null,
+        };
 
         config([
             'mail.default' => $settings->mailer ?: 'smtp',
