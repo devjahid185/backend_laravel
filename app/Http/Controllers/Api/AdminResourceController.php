@@ -109,6 +109,15 @@ class AdminResourceController extends Controller
         }
 
         $query = $model::query();
+        if ($resource === 'food-orders') {
+            $query->with([
+                'restaurant:id,name,phone,address,lat,lng',
+                'rider:id,name,phone,availability_status,account_status',
+            ])->withCount([
+                'riderRequests as pending_rider_requests_count' => fn ($q) => $q->where('status', 'pending'),
+                'riderRequests as total_rider_requests_count',
+            ]);
+        }
         $search = trim((string) $request->query('search', ''));
         if ($search !== '') {
             $this->applySearch($query, $model, $search);
@@ -117,6 +126,9 @@ class AdminResourceController extends Controller
         $perPage = (int) $request->query('per_page', 50);
         $perPage = $perPage > 0 ? min($perPage, 100) : 20;
         $paginator = $query->latest()->paginate($perPage);
+        if ($resource === 'food-orders') {
+            $paginator->setCollection($paginator->getCollection()->map(fn (FoodOrder $order) => $this->decorateFoodOrder($order)));
+        }
 
         $columns = $this->columnsFor($model);
 
@@ -146,6 +158,11 @@ class AdminResourceController extends Controller
                 'restaurant:id,name,phone,address,lat,lng',
                 'address',
                 'rider:id,name,phone,availability_status,account_status',
+                'riderRequests.rider:id,name,phone,availability_status,account_status',
+            ]);
+            $query->withCount([
+                'riderRequests as pending_rider_requests_count' => fn ($q) => $q->where('status', 'pending'),
+                'riderRequests as total_rider_requests_count',
             ]);
         }
         if ($resource === 'riders') {
@@ -153,6 +170,10 @@ class AdminResourceController extends Controller
         }
 
         $record = $query->findOrFail($id);
+
+        if ($resource === 'food-orders') {
+            $record = $this->decorateFoodOrder($record);
+        }
 
         return response()->json($record);
     }
@@ -226,5 +247,47 @@ class AdminResourceController extends Controller
                 $q->orWhere($column, 'like', '%' . $search . '%');
             }
         });
+    }
+
+    private function decorateFoodOrder(FoodOrder $order): FoodOrder
+    {
+        $order->rider_assignment_status = $order->rider_id ? 'accepted' : 'not_accepted';
+        $order->rider_assignment_label = $order->rider_id
+            ? 'Rider accepted'
+            : (((int) ($order->pending_rider_requests_count ?? 0)) > 0 ? 'Waiting for rider' : 'No rider accepted yet');
+        $order->accepted_rider_name = $order->rider?->name;
+        $order->accepted_rider_phone = $order->rider?->phone;
+        $order->route_distance_km = $this->foodOrderDistanceKm($order);
+
+        return $order;
+    }
+
+    private function foodOrderDistanceKm(FoodOrder $order): ?float
+    {
+        if ($order->delivery_distance_km !== null) {
+            return round((float) $order->delivery_distance_km, 2);
+        }
+
+        $restaurant = $order->restaurant;
+        if (
+            $restaurant?->lat === null
+            || $restaurant?->lng === null
+            || $order->delivery_lat === null
+            || $order->delivery_lng === null
+        ) {
+            return null;
+        }
+
+        $earthKm = 6371;
+        $fromLat = (float) $restaurant->lat;
+        $fromLng = (float) $restaurant->lng;
+        $toLat = (float) $order->delivery_lat;
+        $toLng = (float) $order->delivery_lng;
+        $latDelta = deg2rad($toLat - $fromLat);
+        $lngDelta = deg2rad($toLng - $fromLng);
+        $a = sin($latDelta / 2) ** 2
+            + cos(deg2rad($fromLat)) * cos(deg2rad($toLat)) * sin($lngDelta / 2) ** 2;
+
+        return round($earthKm * 2 * atan2(sqrt($a), sqrt(1 - $a)), 2);
     }
 }

@@ -29,6 +29,11 @@ class FoodOrder extends Model
         return $this->belongsTo(Rider::class);
     }
 
+    public function riderRequests()
+    {
+        return $this->hasMany(RiderOrderRequest::class);
+    }
+
     public function address()
     {
         return $this->belongsTo(FoodAddress::class, 'food_address_id');

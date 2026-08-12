@@ -420,6 +420,9 @@ class FoodDeliveryController extends Controller
         $charge = ($data['order_type'] ?? 'delivery') === 'delivery'
             ? $this->deliveryCharge($cart->restaurant, $address?->area, (float) $data['delivery_lat'], (float) $data['delivery_lng'], $itemsTotal)
             : ['fee' => 0, 'distance_km' => null, 'mode' => 'pickup'];
+        if (($data['order_type'] ?? 'delivery') === 'delivery' && $charge['distance_km'] === null) {
+            $charge['distance_km'] = $this->orderRouteDistance($cart->restaurant, (float) $data['delivery_lat'], (float) $data['delivery_lng']);
+        }
         $deliveryFee = $charge['fee'];
         [$discount, $coupon] = $this->couponDiscount($data['coupon_code'] ?? null, $itemsTotal, $deliveryFee, $cart->restaurant_id);
         $grand = max(0, $itemsTotal + $deliveryFee - $discount);
@@ -800,6 +803,15 @@ class FoodDeliveryController extends Controller
         $fee = max((float) $settings->minimum_charge, $fee);
 
         return ['fee' => round($fee, 2), 'distance_km' => $distanceKm === null ? null : round($distanceKm, 2), 'mode' => 'per_km'];
+    }
+
+    private function orderRouteDistance(?Restaurant $restaurant, ?float $lat, ?float $lng): ?float
+    {
+        if ($restaurant?->lat === null || $restaurant?->lng === null || $lat === null || $lng === null) {
+            return null;
+        }
+
+        return round($this->distanceKm((float) $restaurant->lat, (float) $restaurant->lng, $lat, $lng), 2);
     }
 
     private function distanceKm(float $fromLat, float $fromLng, float $toLat, float $toLng): float
