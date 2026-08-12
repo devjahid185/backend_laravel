@@ -5,11 +5,13 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\PhoneOtp;
 use App\Models\User;
+use App\Services\AuthEmailService;
 use App\Services\SmsService;
 use App\Support\MediaUrl;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -20,7 +22,7 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
-    public function register(Request $request): JsonResponse
+    public function register(Request $request, AuthEmailService $email): JsonResponse
     {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -36,6 +38,7 @@ class AuthController extends Controller
 
         $user = User::query()->create($validated);
         $token = $user->createToken('mobile-app')->plainTextToken;
+        $this->sendWelcomeEmail($user, $email);
 
         return response()->json([
             'message' => 'Registration successful',
@@ -155,7 +158,7 @@ class AuthController extends Controller
         ]);
     }
 
-    public function registerWithOtp(Request $request): JsonResponse
+    public function registerWithOtp(Request $request, AuthEmailService $email): JsonResponse
     {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -168,6 +171,7 @@ class AuthController extends Controller
         ]);
 
         $this->consumeOtp($validated['phone'], 'register', $validated['otp']);
+        unset($validated['otp']);
 
         $user = User::query()->create([
             ...$validated,
@@ -175,6 +179,7 @@ class AuthController extends Controller
         ]);
 
         $token = $user->createToken('mobile-app')->plainTextToken;
+        $this->sendWelcomeEmail($user, $email);
 
         return response()->json([
             'message' => 'Registration successful',
@@ -203,6 +208,91 @@ class AuthController extends Controller
         $user->update(['password' => Hash::make($validated['password'])]);
 
         return response()->json(['message' => 'Password reset successful']);
+    }
+
+    public function requestEmailPasswordReset(Request $request, AuthEmailService $email): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email', 'max:255', 'exists:users,email'],
+        ]);
+
+        $resetEmail = Str::lower($validated['email']);
+        $cooldownKey = 'email-reset-cooldown:'.sha1($resetEmail.'|'.$request->ip());
+        if (RateLimiter::tooManyAttempts($cooldownKey, 1)) {
+            return response()->json([
+                'message' => 'নতুন কোড পাঠানোর আগে '.RateLimiter::availableIn($cooldownKey).' সেকেন্ড অপেক্ষা করুন।',
+            ], 429);
+        }
+
+        $burstKey = 'email-reset-burst:'.sha1($resetEmail.'|'.$request->ip());
+        if (RateLimiter::tooManyAttempts($burstKey, 5)) {
+            return response()->json([
+                'message' => 'অনেকবার চেষ্টা করা হয়েছে। '.ceil(RateLimiter::availableIn($burstKey) / 60).' মিনিট পরে আবার চেষ্টা করুন।',
+            ], 429);
+        }
+
+        $user = User::query()->where('email', $resetEmail)->firstOrFail();
+        $code = (string) random_int(100000, 999999);
+
+        DB::table('password_reset_tokens')->updateOrInsert(
+            ['email' => $resetEmail],
+            ['token' => Hash::make($code), 'created_at' => now()]
+        );
+
+        try {
+            $email->sendPasswordResetCode($user, $code);
+        } catch (\Throwable $e) {
+            Log::error('Password reset email failed', [
+                'email' => $this->maskEmail($resetEmail),
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'ইমেইল পাঠাতে সমস্যা হয়েছে। মেইল সেটিংস দেখে আবার চেষ্টা করুন।',
+            ], 500);
+        }
+
+        RateLimiter::hit($cooldownKey, 60);
+        RateLimiter::hit($burstKey, 15 * 60);
+
+        return response()->json(['message' => 'পাসওয়ার্ড রিসেট কোড ইমেইলে পাঠানো হয়েছে।']);
+    }
+
+    public function resetPasswordWithEmail(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email', 'max:255'],
+            'otp' => ['required', 'string', 'size:6'],
+            'password' => ['required', 'string', 'min:6'],
+        ]);
+
+        $resetEmail = Str::lower($validated['email']);
+        $record = DB::table('password_reset_tokens')->where('email', $resetEmail)->first();
+        if (! $record || ! Hash::check($validated['otp'], $record->token)) {
+            throw ValidationException::withMessages([
+                'otp' => ['রিসেট কোড সঠিক নয়।'],
+            ]);
+        }
+
+        if (Carbon::parse($record->created_at)->addMinutes(15)->isPast()) {
+            DB::table('password_reset_tokens')->where('email', $resetEmail)->delete();
+            throw ValidationException::withMessages([
+                'otp' => ['রিসেট কোডের সময় শেষ হয়েছে। নতুন কোড নিন।'],
+            ]);
+        }
+
+        $user = User::query()->where('email', $resetEmail)->first();
+        if (! $user) {
+            throw ValidationException::withMessages([
+                'email' => ['এই ইমেইলে কোনো অ্যাকাউন্ট পাওয়া যায়নি।'],
+            ]);
+        }
+
+        $user->update(['password' => Hash::make($validated['password'])]);
+        $user->tokens()->delete();
+        DB::table('password_reset_tokens')->where('email', $resetEmail)->delete();
+
+        return response()->json(['message' => 'পাসওয়ার্ড সফলভাবে রিসেট হয়েছে।']);
     }
 
     public function login(Request $request): JsonResponse
@@ -399,6 +489,33 @@ class AuthController extends Controller
         $raw = (string) config('services.google.client_ids');
         $list = array_filter(array_map('trim', explode(',', $raw)));
         return array_values($list);
+    }
+
+    private function sendWelcomeEmail(User $user, AuthEmailService $email): void
+    {
+        if (! $user->email) {
+            return;
+        }
+
+        try {
+            $email->sendWelcome($user);
+        } catch (\Throwable $e) {
+            Log::warning('Welcome email skipped', [
+                'user_id' => $user->id,
+                'email' => $this->maskEmail($user->email),
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function maskEmail(string $email): string
+    {
+        [$name, $domain] = array_pad(explode('@', $email, 2), 2, '');
+        $maskedName = strlen($name) <= 2
+            ? str_repeat('*', strlen($name))
+            : substr($name, 0, 1).str_repeat('*', strlen($name) - 2).substr($name, -1);
+
+        return $maskedName.'@'.$domain;
     }
 
     public function logout(Request $request): JsonResponse

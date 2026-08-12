@@ -9,6 +9,28 @@ class EmailService
 {
     public function sendText(string $to, string $subject, string $body): void
     {
+        $settings = $this->configuredSettings();
+
+        Mail::raw($body, function ($message) use ($to, $subject, $settings): void {
+            $message->to($to)
+                ->from($settings->from_address, $settings->from_name ?: 'Bholabashi')
+                ->subject($subject);
+        });
+    }
+
+    public function sendHtml(string $to, string $subject, string $html): void
+    {
+        $settings = $this->configuredSettings();
+
+        Mail::html($html, function ($message) use ($to, $subject, $settings): void {
+            $message->to($to)
+                ->from($settings->from_address, $settings->from_name ?: 'Bholabashi')
+                ->subject($subject);
+        });
+    }
+
+    private function configuredSettings(): EmailSetting
+    {
         $settings = EmailSetting::current();
 
         if (! $settings->is_enabled) {
@@ -25,11 +47,7 @@ class EmailService
 
         $this->applyRuntimeConfig($settings);
 
-        Mail::raw($body, function ($message) use ($to, $subject, $settings): void {
-            $message->to($to)
-                ->from($settings->from_address, $settings->from_name ?: 'Bholabashi')
-                ->subject($subject);
-        });
+        return $settings;
     }
 
     private function applyRuntimeConfig(EmailSetting $settings): void
