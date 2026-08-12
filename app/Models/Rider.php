@@ -75,6 +75,10 @@ class Rider extends Model
 
     public function getVehicleTypeBnAttribute(): string
     {
+        if (! $this->vehicle_type) {
+            return '';
+        }
+
         return [
             'cycle' => 'সাইকেল',
             'bike' => 'মোটরসাইকেল',
@@ -84,6 +88,10 @@ class Rider extends Model
 
     public function getKycStatusBnAttribute(): string
     {
+        if (! $this->kyc_status) {
+            return '';
+        }
+
         return [
             'draft' => 'খসড়া',
             'pending' => 'পর্যালোচনায় আছে',
@@ -94,6 +102,10 @@ class Rider extends Model
 
     public function getAccountStatusBnAttribute(): string
     {
+        if (! $this->account_status) {
+            return '';
+        }
+
         return [
             'pending' => 'অপেক্ষমাণ',
             'active' => 'সক্রিয়',
@@ -104,6 +116,10 @@ class Rider extends Model
 
     public function getAvailabilityStatusBnAttribute(): string
     {
+        if (! $this->availability_status) {
+            return '';
+        }
+
         return [
             'offline' => 'অফলাইন',
             'online' => 'অনলাইন',
