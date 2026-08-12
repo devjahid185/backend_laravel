@@ -504,7 +504,7 @@ class FoodDeliveryController extends Controller
         if ($data['status'] === 'accepted') $order->accepted_at = now();
         if ($data['status'] === 'delivered') $order->delivered_at = now();
         $order->save();
-        if ($data['status'] === 'accepted') {
+        if (in_array($data['status'], ['accepted', 'preparing'], true)) {
             $this->dispatchOrderToNearbyRiders($order->fresh('restaurant'));
         }
         $this->notifyFoodOrderCustomer($order->fresh('restaurant'));
@@ -899,6 +899,11 @@ class FoodDeliveryController extends Controller
     private function dispatchOrderToNearbyRiders(FoodOrder $order): void
     {
         if ($order->order_type !== 'delivery' || $order->rider_id) {
+            Log::info('Rider dispatch skipped: order not dispatchable', [
+                'order_id' => $order->id,
+                'order_type' => $order->order_type,
+                'rider_id' => $order->rider_id,
+            ]);
             return;
         }
 
@@ -944,11 +949,17 @@ class FoodDeliveryController extends Controller
                     'restaurant_lng' => $originLng,
                     'status' => 'pending',
                     'notified_at' => now(),
-                    'expires_at' => now()->addMinutes(8),
+                    'expires_at' => now()->addMinutes(15),
                     'reject_reason' => null,
                 ]
             );
         }
+
+        Log::info('Rider dispatch requests created', [
+            'order_id' => $order->id,
+            'rider_count' => $riders->count(),
+            'radius_km' => $radiusKm,
+        ]);
 
         $this->notifyRidersForOrder($order, $riders->pluck('id')->all());
     }
