@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AppNotification;
+use App\Models\DeviceToken;
 use App\Models\FoodOrder;
 use App\Models\Rider;
 use App\Models\RiderDocument;
@@ -11,9 +13,11 @@ use App\Models\RiderOrderRequest;
 use App\Models\RiderRating;
 use App\Models\RiderSupportTicket;
 use App\Models\RiderWalletEntry;
+use App\Services\FcmService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class RiderController extends Controller
@@ -164,6 +168,7 @@ class RiderController extends Controller
             'last_lng' => $data['lng'],
             'last_location_at' => now(),
         ]);
+        $this->dispatchNearbyPendingOrders($rider->fresh());
         return response()->json(['message' => 'লোকেশন আপডেট হয়েছে।']);
     }
 
@@ -391,6 +396,116 @@ class RiderController extends Controller
             'zone_based' => round(max((float) $rider->commission_value, (float) $order->delivery_fee * 0.65), 2),
             default => round((float) ($rider->commission_value ?: $order->delivery_fee), 2),
         };
+    }
+
+    private function dispatchNearbyPendingOrders(Rider $rider): void
+    {
+        if (
+            $rider->kyc_status !== 'approved'
+            || $rider->account_status !== 'active'
+            || ! $rider->agreement_accepted
+            || $rider->availability_status !== 'online'
+            || $rider->last_lat === null
+            || $rider->last_lng === null
+        ) {
+            return;
+        }
+
+        $radiusKm = 20.0;
+        $orders = FoodOrder::query()
+            ->with('restaurant:id,name,phone,address,lat,lng')
+            ->where('order_type', 'delivery')
+            ->whereNull('rider_id')
+            ->whereIn('status', ['accepted', 'preparing'])
+            ->latest()
+            ->limit(50)
+            ->get()
+            ->filter(function (FoodOrder $order) use ($rider, $radiusKm): bool {
+                if ($order->restaurant?->lat === null || $order->restaurant?->lng === null) {
+                    return false;
+                }
+
+                $distance = $this->distanceKm(
+                    (float) $order->restaurant->lat,
+                    (float) $order->restaurant->lng,
+                    (float) $rider->last_lat,
+                    (float) $rider->last_lng
+                );
+                $order->rider_dispatch_distance_km = $distance;
+
+                return $distance <= $radiusKm;
+            });
+
+        foreach ($orders as $order) {
+            $request = RiderOrderRequest::query()->updateOrCreate(
+                ['food_order_id' => $order->id, 'rider_id' => $rider->id],
+                [
+                    'distance_km' => round((float) $order->rider_dispatch_distance_km, 2),
+                    'restaurant_lat' => (float) $order->restaurant->lat,
+                    'restaurant_lng' => (float) $order->restaurant->lng,
+                    'status' => 'pending',
+                    'notified_at' => now(),
+                    'expires_at' => now()->addMinutes(15),
+                    'reject_reason' => null,
+                ]
+            );
+
+            if ($request->wasRecentlyCreated || $request->wasChanged(['status', 'expires_at'])) {
+                $this->notifyRiderAboutOrder($rider, $order);
+            }
+        }
+    }
+
+    private function notifyRiderAboutOrder(Rider $rider, FoodOrder $order): void
+    {
+        $restaurantName = $order->restaurant?->name ?: 'রেস্টুরেন্ট';
+        $title = 'নতুন ডেলিভারি রিকোয়েস্ট';
+        $message = "{$restaurantName} থেকে {$order->order_no} অর্ডার ডেলিভারি করতে হবে।";
+        $data = [
+            'type' => 'rider_order_request',
+            'role' => 'rider',
+            'event' => 'new_delivery_request',
+            'order_id' => $order->id,
+            'order_no' => $order->order_no,
+            'restaurant_id' => $order->restaurant_id,
+            'screen' => 'rider_dashboard',
+        ];
+
+        AppNotification::query()->create([
+            'user_id' => $rider->user_id,
+            'title' => $title,
+            'message' => $message,
+            'data' => $data,
+        ]);
+
+        $tokens = DeviceToken::query()->where('user_id', $rider->user_id)->pluck('token')->all();
+        if (! $tokens) {
+            return;
+        }
+
+        try {
+            app(FcmService::class)->sendToTokens($tokens, [
+                'data' => $data + ['title' => $title, 'message' => $message],
+                'notification' => ['title' => $title, 'body' => $message],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Rider location dispatch notification failed', [
+                'order_id' => $order->id,
+                'rider_id' => $rider->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function distanceKm(float $fromLat, float $fromLng, float $toLat, float $toLng): float
+    {
+        $earthKm = 6371;
+        $latDelta = deg2rad($toLat - $fromLat);
+        $lngDelta = deg2rad($toLng - $fromLng);
+        $a = sin($latDelta / 2) ** 2
+            + cos(deg2rad($fromLat)) * cos(deg2rad($toLat)) * sin($lngDelta / 2) ** 2;
+
+        return $earthKm * 2 * atan2(sqrt($a), sqrt(1 - $a));
     }
 
     private function documentTitle(string $type): string
