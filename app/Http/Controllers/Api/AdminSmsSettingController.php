@@ -7,6 +7,8 @@ use App\Models\SmsSetting;
 use App\Services\SmsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class AdminSmsSettingController extends Controller
@@ -30,16 +32,19 @@ class AdminSmsSettingController extends Controller
             'api_url' => ['required', 'url', 'max:255'],
         ]);
 
-        $settings = SmsSetting::current();
         if (blank($validated['api_key'] ?? null)) {
             unset($validated['api_key']);
+        } else {
+            $validated['api_key'] = Crypt::encryptString($validated['api_key']);
         }
 
-        $settings->update($validated);
+        $settings = SmsSetting::current();
+        $validated['updated_at'] = now();
+        DB::table($settings->getTable())->where('id', $settings->id)->update($validated);
 
         return response()->json([
             'message' => 'SMS settings updated successfully.',
-            'settings' => $this->serialize($settings->fresh()),
+            'settings' => $this->serialize(SmsSetting::query()->findOrFail($settings->id)),
         ]);
     }
 
@@ -55,14 +60,15 @@ class AdminSmsSettingController extends Controller
 
         try {
             $sms->send($validated['phone'], $message);
-            $settings->update([
+            DB::table($settings->getTable())->where('id', $settings->id)->update([
                 'last_tested_at' => now(),
                 'last_test_result' => 'Success',
+                'updated_at' => now(),
             ]);
 
             return response()->json([
                 'message' => 'Test SMS sent successfully.',
-                'settings' => $this->serialize($settings->fresh()),
+                'settings' => $this->serialize(SmsSetting::query()->findOrFail($settings->id)),
             ]);
         } catch (\Throwable $e) {
             Log::error('Admin SMS test failed', [
@@ -70,14 +76,15 @@ class AdminSmsSettingController extends Controller
                 'phone' => $this->maskPhone($validated['phone']),
             ]);
 
-            $settings->update([
+            DB::table($settings->getTable())->where('id', $settings->id)->update([
                 'last_tested_at' => now(),
                 'last_test_result' => $e->getMessage(),
+                'updated_at' => now(),
             ]);
 
             return response()->json([
                 'message' => $e->getMessage(),
-                'settings' => $this->serialize($settings->fresh()),
+                'settings' => $this->serialize(SmsSetting::query()->findOrFail($settings->id)),
             ], 422);
         }
     }
@@ -88,7 +95,7 @@ class AdminSmsSettingController extends Controller
             'is_enabled' => (bool) $settings->is_enabled,
             'provider' => $settings->provider,
             'api_key_masked' => $settings->maskedApiKey(),
-            'has_api_key' => filled($settings->api_key),
+            'has_api_key' => $settings->hasValidApiKey(),
             'sender_id' => $settings->sender_id,
             'label' => $settings->label,
             'message_type' => $settings->message_type,

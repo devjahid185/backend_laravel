@@ -22,12 +22,13 @@ class SmsService
             throw new \RuntimeException('SMS sending is disabled.');
         }
 
-        if (! $settings->api_key || ! $settings->sender_id) {
+        $apiKey = $settings->safeApiKey();
+        if (! $apiKey || ! $settings->sender_id) {
             throw new \RuntimeException('SMS service not configured.');
         }
 
         $response = Http::get($settings->api_url ?: 'https://sms.mram.com.bd/smsapi', [
-            'api_key' => $settings->api_key,
+            'api_key' => $apiKey,
             'type' => $settings->message_type ?: 'unicode',
             'contacts' => $this->normalizeBangladeshPhone($phone),
             'senderid' => $settings->sender_id,

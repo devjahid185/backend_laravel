@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Contracts\Encryption\DecryptException;
 
 class SmsSetting extends Model
 {
@@ -45,15 +46,30 @@ class SmsSetting extends Model
 
     public function maskedApiKey(): ?string
     {
-        if (! $this->api_key) {
+        $apiKey = $this->safeApiKey();
+        if (! $apiKey) {
             return null;
         }
 
-        $length = strlen($this->api_key);
+        $length = strlen($apiKey);
         if ($length <= 8) {
             return str_repeat('*', $length);
         }
 
-        return substr($this->api_key, 0, 4).str_repeat('*', max(0, $length - 8)).substr($this->api_key, -4);
+        return substr($apiKey, 0, 4).str_repeat('*', max(0, $length - 8)).substr($apiKey, -4);
+    }
+
+    public function hasValidApiKey(): bool
+    {
+        return filled($this->safeApiKey());
+    }
+
+    public function safeApiKey(): ?string
+    {
+        try {
+            return $this->api_key;
+        } catch (DecryptException) {
+            return null;
+        }
     }
 }
