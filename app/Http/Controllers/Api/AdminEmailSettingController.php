@@ -33,6 +33,10 @@ class AdminEmailSettingController extends Controller
             'timeout' => ['nullable', 'integer', 'min:1', 'max:120'],
         ]);
 
+        if (($validated['encryption'] ?? null) === 'starttls') {
+            $validated['encryption'] = 'tls';
+        }
+
         if (($validated['encryption'] ?? null) === 'none') {
             $validated['encryption'] = null;
         }
@@ -101,7 +105,7 @@ class AdminEmailSettingController extends Controller
             'username' => $settings->username,
             'password_masked' => $settings->maskedPassword(),
             'has_password' => filled($settings->password),
-            'encryption' => $settings->encryption ?: 'none',
+            'encryption' => $settings->encryption === 'starttls' ? 'tls' : ($settings->encryption ?: 'none'),
             'from_address' => $settings->from_address,
             'from_name' => $settings->from_name,
             'timeout' => $settings->timeout,

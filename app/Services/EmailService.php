@@ -34,6 +34,8 @@ class EmailService
 
     private function applyRuntimeConfig(EmailSetting $settings): void
     {
+        $scheme = $settings->encryption === 'starttls' ? 'tls' : $settings->encryption;
+
         config([
             'mail.default' => $settings->mailer ?: 'smtp',
             'mail.from.address' => $settings->from_address,
@@ -42,7 +44,7 @@ class EmailService
             'mail.mailers.smtp.port' => $settings->port,
             'mail.mailers.smtp.username' => $settings->username,
             'mail.mailers.smtp.password' => $settings->password,
-            'mail.mailers.smtp.scheme' => $settings->encryption ?: null,
+            'mail.mailers.smtp.scheme' => $scheme ?: null,
             'mail.mailers.smtp.timeout' => $settings->timeout,
         ]);
 
