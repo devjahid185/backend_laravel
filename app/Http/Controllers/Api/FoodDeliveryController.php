@@ -171,8 +171,8 @@ class FoodDeliveryController extends Controller
             'accepts_food_orders' => ['nullable', 'boolean'],
             'service_radius_km' => ['nullable', 'numeric', 'min:0', 'max:500'],
             'description' => ['nullable', 'string'],
-            'lat' => ['nullable', 'numeric', 'between:-90,90'],
-            'lng' => ['nullable', 'numeric', 'between:-180,180'],
+            'lat' => ['required', 'numeric', 'between:-90,90'],
+            'lng' => ['required', 'numeric', 'between:-180,180'],
         ]);
 
         if (! empty($data['id'])) {
