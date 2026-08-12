@@ -192,6 +192,18 @@ class FoodDeliveryController extends Controller
             ]);
         }
 
+        if ($restaurant->lat !== null && $restaurant->lng !== null) {
+            FoodOrder::query()
+                ->with('restaurant')
+                ->where('restaurant_id', $restaurant->id)
+                ->whereNull('rider_id')
+                ->whereIn('status', ['accepted', 'preparing'])
+                ->latest()
+                ->limit(20)
+                ->get()
+                ->each(fn (FoodOrder $order) => $this->dispatchOrderToNearbyRiders($order));
+        }
+
         return response()->json([
             'message' => $restaurant->status === 'active' ? 'Restaurant saved.' : 'Restaurant submitted for admin approval.',
             'restaurant' => $this->decorateRestaurantForOwner($restaurant->fresh()),
