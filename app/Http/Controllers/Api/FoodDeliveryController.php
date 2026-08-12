@@ -266,7 +266,7 @@ class FoodDeliveryController extends Controller
     {
         $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
         return response()->json(FoodOrder::query()
-            ->with('items', 'restaurant:id,name,phone,address')
+            ->with('items', 'restaurant:id,name,phone,address,lat,lng')
             ->whereIn('restaurant_id', $restaurantIds)
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->query('status')))
             ->latest()

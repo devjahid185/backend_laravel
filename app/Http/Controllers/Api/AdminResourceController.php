@@ -143,7 +143,7 @@ class AdminResourceController extends Controller
         if ($resource === 'food-orders') {
             $query->with([
                 'items',
-                'restaurant:id,name,phone,address',
+                'restaurant:id,name,phone,address,lat,lng',
                 'address',
                 'rider:id,name,phone,availability_status,account_status',
             ]);
