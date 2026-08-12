@@ -267,19 +267,7 @@ class AuthController extends Controller
         ]);
 
         $resetEmail = Str::lower($validated['email']);
-        $record = DB::table('password_reset_tokens')->where('email', $resetEmail)->first();
-        if (! $record || ! Hash::check($validated['otp'], $record->token)) {
-            throw ValidationException::withMessages([
-                'otp' => ['রিসেট কোড সঠিক নয়।'],
-            ]);
-        }
-
-        if (Carbon::parse($record->created_at)->addMinutes(15)->isPast()) {
-            DB::table('password_reset_tokens')->where('email', $resetEmail)->delete();
-            throw ValidationException::withMessages([
-                'otp' => ['রিসেট কোডের সময় শেষ হয়েছে। নতুন কোড নিন।'],
-            ]);
-        }
+        $this->ensureEmailResetCodeValid($resetEmail, $validated['otp']);
 
         $user = User::query()->where('email', $resetEmail)->first();
         if (! $user) {
@@ -293,6 +281,21 @@ class AuthController extends Controller
         DB::table('password_reset_tokens')->where('email', $resetEmail)->delete();
 
         return response()->json(['message' => 'পাসওয়ার্ড সফলভাবে রিসেট হয়েছে।']);
+    }
+
+    public function verifyEmailPasswordReset(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email', 'max:255'],
+            'otp' => ['required', 'string', 'size:6'],
+        ]);
+
+        $this->ensureEmailResetCodeValid(Str::lower($validated['email']), $validated['otp']);
+
+        return response()->json([
+            'message' => 'রিসেট কোড যাচাই হয়েছে।',
+            'verified_at' => now(),
+        ]);
     }
 
     public function login(Request $request): JsonResponse
@@ -516,6 +519,23 @@ class AuthController extends Controller
             : substr($name, 0, 1).str_repeat('*', strlen($name) - 2).substr($name, -1);
 
         return $maskedName.'@'.$domain;
+    }
+
+    private function ensureEmailResetCodeValid(string $email, string $code): void
+    {
+        $record = DB::table('password_reset_tokens')->where('email', $email)->first();
+        if (! $record || ! Hash::check($code, $record->token)) {
+            throw ValidationException::withMessages([
+                'otp' => ['রিসেট কোড সঠিক নয়।'],
+            ]);
+        }
+
+        if (Carbon::parse($record->created_at)->addMinutes(15)->isPast()) {
+            DB::table('password_reset_tokens')->where('email', $email)->delete();
+            throw ValidationException::withMessages([
+                'otp' => ['রিসেট কোডের সময় শেষ হয়েছে। নতুন কোড নিন।'],
+            ]);
+        }
     }
 
     public function logout(Request $request): JsonResponse

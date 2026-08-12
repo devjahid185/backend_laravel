@@ -62,6 +62,7 @@ Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
 Route::post('/register-otp', [AuthController::class, 'registerWithOtp']);
 Route::post('/reset-password', [AuthController::class, 'resetPasswordWithOtp']);
 Route::post('/forgot-password-email', [AuthController::class, 'requestEmailPasswordReset']);
+Route::post('/verify-password-email', [AuthController::class, 'verifyEmailPasswordReset']);
 Route::post('/reset-password-email', [AuthController::class, 'resetPasswordWithEmail']);
 Route::get('/home-banners', [HomeBannerController::class, 'active']);
 
@@ -358,4 +359,3 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::post('/payment/verify', [PaymentController::class, 'verify']);
 
 });
-
