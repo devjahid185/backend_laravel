@@ -100,6 +100,42 @@ class FoodDeliveryController extends Controller
         return response()->json($restaurant);
     }
 
+    public function items(Request $request): JsonResponse
+    {
+        $items = FoodItem::query()
+            ->with('restaurant:id,name,address,phone,opening_hours,status,delivery_available,accepts_food_orders')
+            ->where('status', 'active')
+            ->where('is_available', true)
+            ->whereHas('restaurant', function ($query) use ($request): void {
+                $query->where('status', 'active')
+                    ->where('delivery_available', true)
+                    ->where(function ($q): void {
+                        $q->whereNull('accepts_food_orders')->orWhere('accepts_food_orders', true);
+                    })
+                    ->when($request->filled('area'), function ($q) use ($request): void {
+                        $term = '%' . $request->query('area') . '%';
+                        $q->where(function ($sub) use ($term): void {
+                            $sub->where('address', 'like', $term)->orWhere('upazila', 'like', $term);
+                        });
+                    });
+            })
+            ->when($request->filled('q'), function ($query) use ($request): void {
+                $term = '%' . $request->query('q') . '%';
+                $query->where(function ($sub) use ($term): void {
+                    $sub->where('name', 'like', $term)
+                        ->orWhere('description', 'like', $term)
+                        ->orWhereHas('restaurant', fn ($r) => $r->where('name', 'like', $term));
+                });
+            })
+            ->when($request->filled('category_id'), fn ($q) => $q->where('food_category_id', (int) $request->query('category_id')))
+            ->orderByDesc('is_popular')
+            ->latest()
+            ->paginate((int) min(max((int) $request->query('per_page', 30), 1), 100));
+
+        $items->setCollection($this->decorateFoodItems($items->getCollection()));
+        return response()->json($items);
+    }
+
     public function item(int $id): JsonResponse
     {
         $item = $this->decorateFoodItem(FoodItem::query()->with('restaurant:id,name,address,phone,opening_hours')->findOrFail($id));

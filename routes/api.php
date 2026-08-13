@@ -290,6 +290,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
         Route::get('/home', [FoodDeliveryController::class, 'home']);
         Route::get('/restaurants', [FoodDeliveryController::class, 'restaurants']);
         Route::get('/restaurants/{id}', [FoodDeliveryController::class, 'restaurant'])->whereNumber('id');
+        Route::get('/items', [FoodDeliveryController::class, 'items']);
         Route::get('/items/{id}', [FoodDeliveryController::class, 'item'])->whereNumber('id');
         Route::get('/owner/dashboard', [FoodDeliveryController::class, 'ownerDashboard']);
         Route::get('/owner/restaurants', [FoodDeliveryController::class, 'ownerRestaurants']);
