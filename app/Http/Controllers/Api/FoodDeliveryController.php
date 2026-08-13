@@ -705,8 +705,7 @@ class FoodDeliveryController extends Controller
     {
         $restaurant->image_url = MediaLookup::primaryUrlMap('restaurant', [$restaurant->id])[$restaurant->id] ?? null;
         $restaurant->delivery_time = '৩০-৫০ মিনিট';
-        $restaurant->delivery_fee = $this->deliveryFee($restaurant, null);
-        $restaurant->minimum_order = $restaurant->min_price ?: 100;
+        $restaurant->minimum_order = $restaurant->min_price ?: null;
         $restaurant->is_open = true;
         return $restaurant;
     }
