@@ -112,7 +112,7 @@ class AdminResourceController extends Controller
         if ($resource === 'food-orders') {
             $query->with([
                 'restaurant:id,name,phone,address,lat,lng',
-                'rider:id,name,phone,availability_status,account_status',
+                'rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
             ])->withCount([
                 'riderRequests as pending_rider_requests_count' => fn ($q) => $q->where('status', 'pending'),
                 'riderRequests as total_rider_requests_count',
@@ -157,8 +157,8 @@ class AdminResourceController extends Controller
                 'items',
                 'restaurant:id,name,phone,address,lat,lng',
                 'address',
-                'rider:id,name,phone,availability_status,account_status',
-                'riderRequests.rider:id,name,phone,availability_status,account_status',
+                'rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
+                'riderRequests.rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
             ]);
             $query->withCount([
                 'riderRequests as pending_rider_requests_count' => fn ($q) => $q->where('status', 'pending'),
