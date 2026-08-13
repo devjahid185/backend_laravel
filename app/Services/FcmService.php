@@ -53,20 +53,14 @@ class FcmService
             $notificationPayload['image'] = $image;
         }
 
-        return [
+        $message = [
             'token' => $token,
             'notification' => $notificationPayload,
             'data' => $this->stringifyData($data),
             'android' => [
                 'priority' => 'HIGH',
-                'notification' => array_filter([
-                    'image' => $image,
-                ]),
             ],
             'apns' => [
-                'fcm_options' => array_filter([
-                    'image' => $image,
-                ]),
                 'payload' => [
                     'aps' => [
                         'sound' => 'default',
@@ -74,6 +68,13 @@ class FcmService
                 ],
             ],
         ];
+
+        if ($image) {
+            $message['android']['notification'] = ['image' => $image];
+            $message['apns']['fcm_options'] = ['image' => $image];
+        }
+
+        return $message;
     }
 
     private function stringifyData(array $data): array

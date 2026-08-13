@@ -115,6 +115,18 @@ class AdminNotificationController extends Controller
                 'tokens' => count($tokens),
                 'results' => $results,
             ]);
+            $successCount = collect($results)->filter(fn ($result) => ($result['status'] ?? 0) >= 200 && ($result['status'] ?? 0) < 300)->count();
+            $failureCount = count($results) - $successCount;
+            if ($successCount === 0) {
+                return response()->json([
+                    'message' => 'Notification send failed.',
+                    'sent_to' => 0,
+                    'tokens' => count($tokens),
+                    'success_count' => 0,
+                    'failure_count' => $failureCount,
+                    'results' => $results,
+                ], 502);
+            }
         } catch (\Throwable $e) {
             \Log::error('Admin notification send failed', [
                 'error' => $e->getMessage(),
@@ -148,6 +160,8 @@ class AdminNotificationController extends Controller
             'message' => 'Notification sent.',
             'sent_to' => $users->count(),
             'tokens' => count($tokens),
+            'success_count' => $successCount ?? count($results),
+            'failure_count' => $failureCount ?? 0,
             'results' => $results,
         ]);
     }
