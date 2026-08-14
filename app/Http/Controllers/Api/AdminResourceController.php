@@ -26,6 +26,7 @@ use App\Models\Hospital;
 use App\Models\HospitalCategory;
 use App\Models\Hotel;
 use App\Models\HotelCategory;
+use App\Models\HomeServiceShortcut;
 use App\Models\JobPost;
 use App\Models\LaunchService;
 use App\Models\MarketplaceItem;
@@ -63,6 +64,7 @@ class AdminResourceController extends Controller
         'hospitals' => Hospital::class,
         'hotels' => Hotel::class,
         'restaurants' => Restaurant::class,
+        'home-service-shortcuts' => HomeServiceShortcut::class,
         'food-categories' => FoodCategory::class,
         'food-banners' => FoodBanner::class,
         'food-items' => FoodItem::class,

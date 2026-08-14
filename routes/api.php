@@ -29,6 +29,7 @@ use App\Http\Controllers\Api\ElectricityOfficeController;
 use App\Http\Controllers\Api\FaqController;
 use App\Http\Controllers\Api\FoodDeliveryController;
 use App\Http\Controllers\Api\HomeBannerController;
+use App\Http\Controllers\Api\HomeServiceShortcutController;
 use App\Http\Controllers\Api\HospitalController;
 use App\Http\Controllers\Api\HotelController;
 use App\Http\Controllers\Api\RestaurantController;
@@ -65,6 +66,7 @@ Route::post('/forgot-password-email', [AuthController::class, 'requestEmailPassw
 Route::post('/verify-password-email', [AuthController::class, 'verifyEmailPasswordReset']);
 Route::post('/reset-password-email', [AuthController::class, 'resetPasswordWithEmail']);
 Route::get('/home-banners', [HomeBannerController::class, 'active']);
+Route::get('/home-service-shortcuts', [HomeServiceShortcutController::class, 'active']);
 
 Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::get('/admin/me', [AdminAuthController::class, 'me']);
@@ -87,6 +89,10 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::post('/admin/home-banners', [HomeBannerController::class, 'adminStore']);
     Route::put('/admin/home-banners/{id}', [HomeBannerController::class, 'adminUpdate'])->whereNumber('id');
     Route::delete('/admin/home-banners/{id}', [HomeBannerController::class, 'adminDestroy'])->whereNumber('id');
+    Route::get('/admin/home-service-shortcuts', [HomeServiceShortcutController::class, 'adminIndex']);
+    Route::post('/admin/home-service-shortcuts', [HomeServiceShortcutController::class, 'adminStore']);
+    Route::put('/admin/home-service-shortcuts/{id}', [HomeServiceShortcutController::class, 'adminUpdate'])->whereNumber('id');
+    Route::delete('/admin/home-service-shortcuts/{id}', [HomeServiceShortcutController::class, 'adminDestroy'])->whereNumber('id');
 
     Route::get('/admin/users', [AdminUserController::class, 'index']);
     Route::post('/admin/users', [AdminUserController::class, 'store']);
