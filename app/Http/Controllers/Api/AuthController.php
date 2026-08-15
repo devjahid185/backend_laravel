@@ -156,13 +156,13 @@ class AuthController extends Controller
             return response()->json(['message' => 'Unauthorized.'], 401);
         }
 
-        $otp = $validated['purpose'] === 'reset'
+        $otp = in_array($validated['purpose'], ['reset', 'password_change'], true)
             ? $this->verifyOtpWithoutConsuming($validated['phone'], $validated['purpose'], $validated['otp'])
             : $this->consumeOtp($validated['phone'], $validated['purpose'], $validated['otp']);
 
         return response()->json([
             'message' => 'OTP verified',
-            'verified_at' => $validated['purpose'] === 'reset' ? now() : $otp->consumed_at,
+            'verified_at' => in_array($validated['purpose'], ['reset', 'password_change'], true) ? now() : $otp->consumed_at,
         ]);
     }
 
