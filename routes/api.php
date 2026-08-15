@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\AdminFoodDeliverySettingController;
 use App\Http\Controllers\Api\AdminNotificationController;
 use App\Http\Controllers\Api\AdminProfileController;
 use App\Http\Controllers\Api\AdminSmsSettingController;
+use App\Http\Controllers\Api\AdminSupportSettingController;
 use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AppVisitController;
 use App\Http\Controllers\Api\AuthController;
@@ -36,6 +37,7 @@ use App\Http\Controllers\Api\RestaurantController;
 use App\Http\Controllers\Api\EducationController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\StudentRequestController;
+use App\Http\Controllers\Api\SupportSettingController;
 use App\Http\Controllers\Api\TeacherController;
 use App\Http\Controllers\Api\TeacherRequestController;
 use App\Http\Controllers\Api\EmergencyController;
@@ -67,6 +69,7 @@ Route::post('/verify-password-email', [AuthController::class, 'verifyEmailPasswo
 Route::post('/reset-password-email', [AuthController::class, 'resetPasswordWithEmail']);
 Route::get('/home-banners', [HomeBannerController::class, 'active']);
 Route::get('/home-service-shortcuts', [HomeServiceShortcutController::class, 'active']);
+Route::get('/support-settings', [SupportSettingController::class, 'show']);
 
 Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::get('/admin/me', [AdminAuthController::class, 'me']);
@@ -85,6 +88,8 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::post('/admin/email-settings/test', [AdminEmailSettingController::class, 'test']);
     Route::get('/admin/food-delivery-settings', [AdminFoodDeliverySettingController::class, 'show']);
     Route::put('/admin/food-delivery-settings', [AdminFoodDeliverySettingController::class, 'update']);
+    Route::get('/admin/support-settings', [AdminSupportSettingController::class, 'show']);
+    Route::put('/admin/support-settings', [AdminSupportSettingController::class, 'update']);
     Route::get('/admin/home-banners', [HomeBannerController::class, 'adminIndex']);
     Route::post('/admin/home-banners', [HomeBannerController::class, 'adminStore']);
     Route::put('/admin/home-banners/{id}', [HomeBannerController::class, 'adminUpdate'])->whereNumber('id');
