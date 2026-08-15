@@ -37,7 +37,7 @@ class AuthController extends Controller
         ]);
 
         $user = User::query()->create($validated);
-        $token = $user->createToken('mobile-app')->plainTextToken;
+        $token = $user->createToken($this->deviceTokenName($request))->plainTextToken;
         $this->sendWelcomeEmail($user, $email);
 
         return response()->json([
@@ -51,11 +51,15 @@ class AuthController extends Controller
     {
         $validated = $request->validate([
             'phone' => ['required', 'string', 'max:20'],
-            'purpose' => ['required', 'in:register,reset,login'],
+            'purpose' => ['required', 'in:register,reset,login,password_change'],
         ]);
 
+        if ($validated['purpose'] === 'password_change' && ! $request->user()) {
+            return response()->json(['message' => 'Unauthorized.'], 401);
+        }
+
         $userExists = User::query()->where('phone', $validated['phone'])->exists();
-        if (in_array($validated['purpose'], ['reset', 'login'], true) && ! $userExists) {
+        if (in_array($validated['purpose'], ['reset', 'login', 'password_change'], true) && ! $userExists) {
             throw ValidationException::withMessages([
                 'phone' => ['No account found with this phone number.'],
             ]);
@@ -144,9 +148,13 @@ class AuthController extends Controller
     {
         $validated = $request->validate([
             'phone' => ['required', 'string', 'max:20'],
-            'purpose' => ['required', 'in:register,reset,login'],
+            'purpose' => ['required', 'in:register,reset,login,password_change'],
             'otp' => ['required', 'string', 'size:6'],
         ]);
+
+        if ($validated['purpose'] === 'password_change' && ! $request->user()) {
+            return response()->json(['message' => 'Unauthorized.'], 401);
+        }
 
         $otp = $validated['purpose'] === 'reset'
             ? $this->verifyOtpWithoutConsuming($validated['phone'], $validated['purpose'], $validated['otp'])
@@ -178,7 +186,7 @@ class AuthController extends Controller
             'password' => Hash::make($validated['password']),
         ]);
 
-        $token = $user->createToken('mobile-app')->plainTextToken;
+        $token = $user->createToken($this->deviceTokenName($request))->plainTextToken;
         $this->sendWelcomeEmail($user, $email);
 
         return response()->json([
@@ -321,7 +329,7 @@ class AuthController extends Controller
             return response()->json(['message' => 'Your account is blocked.'], 403);
         }
 
-        $token = $user->createToken('mobile-app')->plainTextToken;
+        $token = $user->createToken($this->deviceTokenName($request))->plainTextToken;
 
         return response()->json([
             'message' => 'Login successful',
@@ -397,7 +405,7 @@ class AuthController extends Controller
             return response()->json(['message' => 'Your account is blocked.'], 403);
         }
 
-        $token = $user->createToken('mobile-app')->plainTextToken;
+        $token = $user->createToken($this->deviceTokenName($request))->plainTextToken;
 
         return response()->json([
             'message' => 'Login successful',
@@ -494,6 +502,14 @@ class AuthController extends Controller
         return array_values($list);
     }
 
+    private function deviceTokenName(Request $request): string
+    {
+        $platform = trim((string) $request->input('device_platform', 'mobile'));
+        $name = trim((string) $request->input('device_name', 'Bholavashi App'));
+
+        return Str::limit($name.' · '.$platform, 120, '');
+    }
+
     private function sendWelcomeEmail(User $user, AuthEmailService $email): void
     {
         if (! $user->email) {
@@ -545,6 +561,102 @@ class AuthController extends Controller
         return response()->json(['message' => 'Logged out successfully']);
     }
 
+    public function requestPasswordChangeOtp(Request $request, SmsService $sms): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user->phone) {
+            return response()->json([
+                'message' => 'এই অ্যাকাউন্টে ফোন নম্বর নেই। আগে প্রোফাইলে ফোন নম্বর যোগ করুন।',
+            ], 422);
+        }
+
+        $request->merge([
+            'phone' => $user->phone,
+            'purpose' => 'password_change',
+        ]);
+
+        return $this->requestOtp($request, $sms);
+    }
+
+    public function changePassword(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'current_password' => ['required', 'string'],
+            'otp' => ['required', 'string', 'size:6'],
+            'password' => ['required', 'string', 'min:6'],
+        ]);
+
+        $user = $request->user();
+        if (! Hash::check($validated['current_password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => ['বর্তমান পাসওয়ার্ড সঠিক নয়।'],
+            ]);
+        }
+
+        if (! $user->phone) {
+            throw ValidationException::withMessages([
+                'phone' => ['এই অ্যাকাউন্টে ফোন নম্বর নেই।'],
+            ]);
+        }
+
+        $this->consumeOtp($user->phone, 'password_change', $validated['otp']);
+        $user->update(['password' => Hash::make($validated['password'])]);
+
+        $currentTokenId = $request->user()->currentAccessToken()?->id;
+        if ($currentTokenId) {
+            $user->tokens()->where('id', '!=', $currentTokenId)->delete();
+        }
+
+        return response()->json(['message' => 'পাসওয়ার্ড সফলভাবে পরিবর্তন হয়েছে।']);
+    }
+
+    public function loginDevices(Request $request): JsonResponse
+    {
+        $currentTokenId = $request->user()->currentAccessToken()?->id;
+        $devices = $request->user()->tokens()
+            ->latest('last_used_at')
+            ->latest('created_at')
+            ->get()
+            ->map(fn ($token) => [
+                'id' => $token->id,
+                'name' => $token->name,
+                'is_current' => $token->id === $currentTokenId,
+                'last_used_at' => optional($token->last_used_at)->toIso8601String(),
+                'created_at' => optional($token->created_at)->toIso8601String(),
+            ])
+            ->values();
+
+        return response()->json(['devices' => $devices]);
+    }
+
+    public function revokeLoginDevice(Request $request, int $id): JsonResponse
+    {
+        $token = $request->user()->tokens()->where('id', $id)->firstOrFail();
+        $isCurrent = $request->user()->currentAccessToken()?->id === $token->id;
+        $token->delete();
+
+        return response()->json([
+            'message' => 'ডিভাইস লগআউট করা হয়েছে।',
+            'revoked_current' => $isCurrent,
+        ]);
+    }
+
+    public function revokeOtherLoginDevices(Request $request): JsonResponse
+    {
+        $currentTokenId = $request->user()->currentAccessToken()?->id;
+        $query = $request->user()->tokens();
+        if ($currentTokenId) {
+            $query->where('id', '!=', $currentTokenId);
+        }
+        $count = $query->count();
+        $query->delete();
+
+        return response()->json([
+            'message' => 'অন্য সব ডিভাইস লগআউট করা হয়েছে।',
+            'revoked_count' => $count,
+        ]);
+    }
+
     public function profile(Request $request): JsonResponse
     {
         $user = $request->user()->fresh();
@@ -567,7 +679,6 @@ class AuthController extends Controller
             'upazila' => ['sometimes', 'nullable', 'string', 'max:255'],
             'union_name' => ['sometimes', 'nullable', 'string', 'max:255'],
             'address' => ['sometimes', 'nullable', 'string', 'max:255'],
-            'password' => ['sometimes', 'nullable', 'string', 'min:6'],
         ]);
 
         if ($request->hasFile('photo')) {
@@ -584,11 +695,6 @@ class AuthController extends Controller
         }
 
         unset($validated['photo_path']);
-        if (! empty($validated['password'])) {
-            $validated['password'] = Hash::make($validated['password']);
-        } else {
-            unset($validated['password']);
-        }
         $request->user()->update($validated);
         $user = $request->user()->fresh();
 

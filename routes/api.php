@@ -122,6 +122,11 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/profile', [AuthController::class, 'profile']);
     Route::post('/update-profile', [AuthController::class, 'updateProfile']);
+    Route::post('/change-password/request-otp', [AuthController::class, 'requestPasswordChangeOtp']);
+    Route::post('/change-password', [AuthController::class, 'changePassword']);
+    Route::get('/login-devices', [AuthController::class, 'loginDevices']);
+    Route::delete('/login-devices/others', [AuthController::class, 'revokeOtherLoginDevices']);
+    Route::delete('/login-devices/{id}', [AuthController::class, 'revokeLoginDevice'])->whereNumber('id');
     Route::post('/app-visit', [AppVisitController::class, 'store']);
     Route::post('/profile/photo', [MediaController::class, 'uploadProfilePhoto']);
     Route::post('/device-token', [DeviceTokenController::class, 'store']);
