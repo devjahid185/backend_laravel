@@ -9,6 +9,7 @@ class MapSetting extends Model
     protected $fillable = [
         'is_enabled',
         'provider',
+        'mobile_map_mode',
         'browser_api_key',
         'maps_javascript_enabled',
         'embed_enabled',
@@ -38,6 +39,7 @@ class MapSetting extends Model
             [
                 'is_enabled' => false,
                 'provider' => 'google',
+                'mobile_map_mode' => 'webview',
                 'maps_javascript_enabled' => true,
                 'embed_enabled' => true,
                 'places_enabled' => false,

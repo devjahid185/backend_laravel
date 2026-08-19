@@ -16,6 +16,7 @@ class MapSettingController extends Controller
             'settings' => [
                 'is_enabled' => (bool) $settings->is_enabled,
                 'provider' => $settings->provider,
+                'mobile_map_mode' => $settings->mobile_map_mode ?: 'webview',
                 'browser_api_key' => $settings->is_enabled ? $settings->browser_api_key : null,
                 'maps_javascript_enabled' => (bool) $settings->maps_javascript_enabled,
                 'embed_enabled' => (bool) $settings->embed_enabled,

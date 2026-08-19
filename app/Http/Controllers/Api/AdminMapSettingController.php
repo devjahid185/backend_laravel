@@ -21,6 +21,7 @@ class AdminMapSettingController extends Controller
         $validated = $request->validate([
             'is_enabled' => ['required', 'boolean'],
             'provider' => ['required', 'in:google'],
+            'mobile_map_mode' => ['required', 'in:webview,native_android'],
             'browser_api_key' => ['nullable', 'string', 'max:500'],
             'maps_javascript_enabled' => ['required', 'boolean'],
             'embed_enabled' => ['required', 'boolean'],
@@ -48,6 +49,7 @@ class AdminMapSettingController extends Controller
         return [
             'is_enabled' => (bool) $settings->is_enabled,
             'provider' => $settings->provider,
+            'mobile_map_mode' => $settings->mobile_map_mode ?: 'webview',
             'has_browser_api_key' => $settings->hasBrowserApiKey(),
             'browser_api_key_masked' => $settings->maskedBrowserApiKey(),
             'maps_javascript_enabled' => (bool) $settings->maps_javascript_enabled,
