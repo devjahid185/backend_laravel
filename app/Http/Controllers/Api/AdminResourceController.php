@@ -119,6 +119,7 @@ class AdminResourceController extends Controller
                 'riderRequests as pending_rider_requests_count' => fn ($q) => $q->where('status', 'pending'),
                 'riderRequests as total_rider_requests_count',
             ]);
+            $this->applyFoodOrderFilters($query, $request);
         }
         $search = trim((string) $request->query('search', ''));
         if ($search !== '') {
@@ -220,6 +221,59 @@ class AdminResourceController extends Controller
         return response()->json(['message' => 'Deleted']);
     }
 
+    public function foodOrderPaymentSummary(Request $request): JsonResponse
+    {
+        $base = FoodOrder::query()->with('restaurant:id,name,user_id,manual_bkash_number,manual_nagad_number');
+        $this->applyFoodOrderFilters($base, $request);
+
+        $orders = $base->get();
+        $ownerRows = $orders
+            ->groupBy('restaurant_id')
+            ->map(function ($rows) {
+                $first = $rows->first();
+                $manualRows = $rows->whereIn('payment_method', ['manual_bkash', 'manual_nagad']);
+
+                return [
+                    'restaurant_id' => $first->restaurant_id,
+                    'restaurant_name' => $first->restaurant?->name ?: 'Unknown restaurant',
+                    'owner_user_id' => $first->restaurant?->user_id,
+                    'bkash_number' => $first->restaurant?->manual_bkash_number,
+                    'nagad_number' => $first->restaurant?->manual_nagad_number,
+                    'orders_count' => $rows->count(),
+                    'cod_orders_count' => $rows->where('payment_method', 'cash_on_delivery')->count(),
+                    'manual_orders_count' => $manualRows->count(),
+                    'owner_received_total' => round((float) $manualRows->sum('grand_total'), 2),
+                    'cod_collectable_total' => round((float) $rows->where('payment_method', 'cash_on_delivery')->sum('grand_total'), 2),
+                    'delivery_fee_total' => round((float) $rows->sum('delivery_fee'), 2),
+                    'grand_total' => round((float) $rows->sum('grand_total'), 2),
+                ];
+            })
+            ->sortByDesc('grand_total')
+            ->values();
+
+        $methodRows = $orders
+            ->groupBy('payment_method')
+            ->map(fn ($rows, $method) => [
+                'payment_method' => $method ?: 'unknown',
+                'orders_count' => $rows->count(),
+                'grand_total' => round((float) $rows->sum('grand_total'), 2),
+                'delivery_fee_total' => round((float) $rows->sum('delivery_fee'), 2),
+            ])
+            ->values();
+
+        return response()->json([
+            'totals' => [
+                'orders_count' => $orders->count(),
+                'grand_total' => round((float) $orders->sum('grand_total'), 2),
+                'delivery_fee_total' => round((float) $orders->sum('delivery_fee'), 2),
+                'owner_received_total' => round((float) $orders->whereIn('payment_method', ['manual_bkash', 'manual_nagad'])->sum('grand_total'), 2),
+                'cod_collectable_total' => round((float) $orders->where('payment_method', 'cash_on_delivery')->sum('grand_total'), 2),
+            ],
+            'by_owner' => $ownerRows,
+            'by_method' => $methodRows,
+        ]);
+    }
+
     private function resolveModel(string $resource): ?string
     {
         return self::RESOURCE_MAP[$resource] ?? null;
@@ -249,6 +303,17 @@ class AdminResourceController extends Controller
                 $q->orWhere($column, 'like', '%' . $search . '%');
             }
         });
+    }
+
+    private function applyFoodOrderFilters($query, Request $request): void
+    {
+        $query
+            ->when($request->filled('payment_method'), fn ($q) => $q->where('payment_method', $request->query('payment_method')))
+            ->when($request->filled('payment_status'), fn ($q) => $q->where('payment_status', $request->query('payment_status')))
+            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->query('status')))
+            ->when($request->filled('restaurant_id'), fn ($q) => $q->where('restaurant_id', (int) $request->query('restaurant_id')))
+            ->when($request->filled('date_from'), fn ($q) => $q->whereDate('created_at', '>=', $request->query('date_from')))
+            ->when($request->filled('date_to'), fn ($q) => $q->whereDate('created_at', '<=', $request->query('date_to')));
     }
 
     private function decorateFoodOrder(FoodOrder $order): FoodOrder

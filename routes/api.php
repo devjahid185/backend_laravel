@@ -123,6 +123,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::delete('/admin/reviews/{id}', [AdminReviewController::class, 'destroy'])->whereNumber('id');
 
     Route::get('/admin/resources/{resource}', [AdminResourceController::class, 'index']);
+    Route::get('/admin/food-orders/payment-summary', [AdminResourceController::class, 'foodOrderPaymentSummary']);
     Route::post('/admin/resources/{resource}', [AdminResourceController::class, 'store']);
     Route::get('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'show'])->whereNumber('id');
     Route::put('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'update'])->whereNumber('id');
