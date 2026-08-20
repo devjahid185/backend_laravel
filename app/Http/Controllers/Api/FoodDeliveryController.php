@@ -205,6 +205,10 @@ class FoodDeliveryController extends Controller
             'takeaway_available' => ['nullable', 'boolean'],
             'dine_in_available' => ['nullable', 'boolean'],
             'accepts_food_orders' => ['nullable', 'boolean'],
+            'cod_enabled' => ['nullable', 'boolean'],
+            'manual_bkash_number' => ['nullable', 'string', 'max:40'],
+            'manual_nagad_number' => ['nullable', 'string', 'max:40'],
+            'manual_payment_instructions' => ['nullable', 'string', 'max:1000'],
             'service_radius_km' => ['nullable', 'numeric', 'min:0', 'max:500'],
             'description' => ['nullable', 'string'],
             'lat' => ['required', 'numeric', 'between:-90,90'],
@@ -222,6 +226,7 @@ class FoodDeliveryController extends Controller
                 'district' => $data['district'] ?? 'Bhola',
                 'delivery_available' => $data['delivery_available'] ?? true,
                 'accepts_food_orders' => $data['accepts_food_orders'] ?? true,
+                'cod_enabled' => $data['cod_enabled'] ?? true,
                 'takeaway_available' => $data['takeaway_available'] ?? true,
                 'dine_in_available' => $data['dine_in_available'] ?? true,
                 'status' => 'pending',
@@ -434,7 +439,7 @@ class FoodDeliveryController extends Controller
         $data = $request->validate([
             'food_address_id' => ['nullable', 'exists:food_addresses,id'],
             'order_type' => ['nullable', 'in:delivery,pickup'],
-            'payment_method' => ['nullable', 'in:cash_on_delivery,online'],
+            'payment_method' => ['nullable', 'in:cash_on_delivery,manual_bkash,manual_nagad,online'],
             'coupon_code' => ['nullable', 'string', 'max:40'],
             'order_note' => ['nullable', 'string', 'max:500'],
             'delivery_lat' => ['required_if:order_type,delivery', 'nullable', 'numeric', 'between:-90,90'],
@@ -443,6 +448,8 @@ class FoodDeliveryController extends Controller
         ]);
         $cart = FoodCart::query()->with(['items.foodItem', 'restaurant'])->where('user_id', $request->user()->id)->firstOrFail();
         abort_if($cart->items->isEmpty(), 422, 'Cart is empty.');
+        $paymentMethod = $data['payment_method'] ?? $this->defaultPaymentMethod($cart->restaurant);
+        abort_unless($this->restaurantSupportsPayment($cart->restaurant, $paymentMethod), 422, 'Selected payment method is not available for this restaurant.');
         $address = null;
         if (($data['order_type'] ?? 'delivery') === 'delivery') {
             $address = ! empty($data['food_address_id'])
@@ -463,7 +470,7 @@ class FoodDeliveryController extends Controller
         [$discount, $coupon] = $this->couponDiscount($data['coupon_code'] ?? null, $itemsTotal, $deliveryFee, $cart->restaurant_id);
         $grand = max(0, $itemsTotal + $deliveryFee - $discount);
 
-        $order = DB::transaction(function () use ($request, $cart, $address, $data, $itemsTotal, $deliveryFee, $discount, $coupon, $grand, $charge) {
+        $order = DB::transaction(function () use ($request, $cart, $address, $data, $itemsTotal, $deliveryFee, $discount, $coupon, $grand, $charge, $paymentMethod) {
             $order = FoodOrder::query()->create([
                 'order_no' => 'FD-' . now()->format('ymd') . '-' . strtoupper(Str::random(6)),
                 'user_id' => $request->user()->id,
@@ -478,7 +485,7 @@ class FoodDeliveryController extends Controller
                 'delivery_lng' => $data['delivery_lng'] ?? $address?->lng,
                 'delivery_map_url' => $data['delivery_map_url'] ?? $this->mapUrl($data['delivery_lat'] ?? $address?->lat, $data['delivery_lng'] ?? $address?->lng),
                 'order_type' => $data['order_type'] ?? 'delivery',
-                'payment_method' => $data['payment_method'] ?? 'cash_on_delivery',
+                'payment_method' => $paymentMethod,
                 'items_total' => $itemsTotal,
                 'delivery_fee' => $deliveryFee,
                 'delivery_distance_km' => $charge['distance_km'],
@@ -707,6 +714,7 @@ class FoodDeliveryController extends Controller
         $restaurant->delivery_time = '৩০-৫০ মিনিট';
         $restaurant->minimum_order = $restaurant->min_price ?: null;
         $restaurant->is_open = true;
+        $restaurant->payment_options = $this->restaurantPaymentOptions($restaurant);
         return $restaurant;
     }
 
@@ -718,7 +726,55 @@ class FoodDeliveryController extends Controller
             : null;
         $restaurant->menu_items_count = FoodItem::query()->where('restaurant_id', $restaurant->id)->count();
         $restaurant->pending_orders_count = FoodOrder::query()->where('restaurant_id', $restaurant->id)->where('status', 'pending')->count();
+        $restaurant->payment_options = $this->restaurantPaymentOptions($restaurant);
         return $restaurant;
+    }
+
+    private function restaurantPaymentOptions(?Restaurant $restaurant): array
+    {
+        if (! $restaurant) {
+            return [];
+        }
+
+        $options = [];
+        if ($restaurant->cod_enabled ?? true) {
+            $options[] = [
+                'method' => 'cash_on_delivery',
+                'title' => 'Cash on Delivery',
+                'subtitle' => 'খাবার হাতে পেয়ে টাকা দিন',
+                'number' => null,
+                'instructions' => null,
+            ];
+        }
+
+        foreach ([
+            'manual_bkash' => ['title' => 'Manual bKash', 'field' => 'manual_bkash_number'],
+            'manual_nagad' => ['title' => 'Manual Nagad', 'field' => 'manual_nagad_number'],
+        ] as $method => $config) {
+            $number = trim((string) ($restaurant->{$config['field']} ?? ''));
+            if ($number === '') {
+                continue;
+            }
+            $options[] = [
+                'method' => $method,
+                'title' => $config['title'],
+                'subtitle' => 'অর্ডার করার আগে/পরে এই নম্বরে পেমেন্ট করুন',
+                'number' => $number,
+                'instructions' => $restaurant->manual_payment_instructions,
+            ];
+        }
+
+        return $options;
+    }
+
+    private function restaurantSupportsPayment(?Restaurant $restaurant, string $method): bool
+    {
+        return collect($this->restaurantPaymentOptions($restaurant))->contains('method', $method);
+    }
+
+    private function defaultPaymentMethod(?Restaurant $restaurant): string
+    {
+        return $this->restaurantPaymentOptions($restaurant)[0]['method'] ?? 'cash_on_delivery';
     }
 
     private function decorateFoodItem(FoodItem $item): FoodItem
@@ -793,6 +849,7 @@ class FoodDeliveryController extends Controller
         return [
             'cart' => $cart,
             'restaurant' => $cart->restaurant,
+            'payment_options' => $this->restaurantPaymentOptions($cart->restaurant),
             'items' => $items,
             'items_total' => $itemsTotal,
             'delivery_fee' => $deliveryFee,

@@ -16,6 +16,7 @@ class Restaurant extends Model
         'features' => 'array',
         'delivery_available' => 'boolean',
         'accepts_food_orders' => 'boolean',
+        'cod_enabled' => 'boolean',
         'takeaway_available' => 'boolean',
         'dine_in_available' => 'boolean',
         'service_radius_km' => 'decimal:2',
