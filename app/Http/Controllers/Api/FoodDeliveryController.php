@@ -254,7 +254,16 @@ class FoodDeliveryController extends Controller
     public function ownerItems(Request $request): JsonResponse
     {
         $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
-        $items = FoodItem::query()->with('category:id,name', 'restaurant:id,name')->whereIn('restaurant_id', $restaurantIds)->latest()->paginate(50);
+        $items = FoodItem::query()
+            ->with('category:id,name', 'restaurant:id,name')
+            ->whereIn('restaurant_id', $restaurantIds)
+            ->when($request->filled('restaurant_id'), function ($query) use ($request, $restaurantIds): void {
+                $restaurantId = (int) $request->query('restaurant_id');
+                abort_unless($restaurantIds->contains($restaurantId), 403, 'Unauthorized restaurant access.');
+                $query->where('restaurant_id', $restaurantId);
+            })
+            ->latest()
+            ->paginate(50);
         $items->setCollection($this->decorateFoodItems($items->getCollection()));
         return response()->json($items);
     }
