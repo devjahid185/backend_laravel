@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\AdminReviewController;
 use App\Http\Controllers\Api\AdminDashboardController;
 use App\Http\Controllers\Api\AdminEmailSettingController;
 use App\Http\Controllers\Api\AdminFoodDeliverySettingController;
+use App\Http\Controllers\Api\AdminAppVersionSettingController;
 use App\Http\Controllers\Api\AdminMapSettingController;
 use App\Http\Controllers\Api\AdminNotificationController;
 use App\Http\Controllers\Api\AdminProfileController;
@@ -16,6 +17,7 @@ use App\Http\Controllers\Api\AdminSmsSettingController;
 use App\Http\Controllers\Api\AdminSupportSettingController;
 use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AppVisitController;
+use App\Http\Controllers\Api\AppVersionController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BloodDonorController;
 use App\Http\Controllers\Api\BloodRequestController;
@@ -73,6 +75,7 @@ Route::get('/home-banners', [HomeBannerController::class, 'active']);
 Route::get('/home-service-shortcuts', [HomeServiceShortcutController::class, 'active']);
 Route::get('/support-settings', [SupportSettingController::class, 'show']);
 Route::get('/map-settings', [MapSettingController::class, 'show']);
+Route::get('/app-version-check', [AppVersionController::class, 'check']);
 
 Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::get('/admin/me', [AdminAuthController::class, 'me']);
@@ -91,6 +94,8 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::post('/admin/email-settings/test', [AdminEmailSettingController::class, 'test']);
     Route::get('/admin/food-delivery-settings', [AdminFoodDeliverySettingController::class, 'show']);
     Route::put('/admin/food-delivery-settings', [AdminFoodDeliverySettingController::class, 'update']);
+    Route::get('/admin/app-version-settings', [AdminAppVersionSettingController::class, 'show']);
+    Route::put('/admin/app-version-settings', [AdminAppVersionSettingController::class, 'update']);
     Route::get('/admin/map-settings', [AdminMapSettingController::class, 'show']);
     Route::put('/admin/map-settings', [AdminMapSettingController::class, 'update']);
     Route::get('/admin/support-settings', [AdminSupportSettingController::class, 'show']);
