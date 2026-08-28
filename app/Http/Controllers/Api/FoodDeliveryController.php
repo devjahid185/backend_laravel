@@ -16,6 +16,7 @@ use App\Models\FoodFavorite;
 use App\Models\FoodItem;
 use App\Models\FoodOrder;
 use App\Models\FoodOrderItem;
+use App\Models\FoodOrderSupportTicket;
 use App\Models\FoodReview;
 use App\Models\Restaurant;
 use App\Models\RestaurantCategory;
@@ -539,7 +540,7 @@ class FoodDeliveryController extends Controller
     public function order(Request $request, int $id): JsonResponse
     {
         $order = FoodOrder::query()
-            ->with('items', 'restaurant:id,name,phone,address,opening_hours,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
+            ->with('items', 'supportTickets:id,food_order_id,subject,message,status,admin_reply,created_at,updated_at', 'restaurant:id,name,phone,address,opening_hours,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
             ->where('user_id', $request->user()->id)
             ->findOrFail($id);
         $order->review = $this->foodReviewQuery()
@@ -548,6 +549,38 @@ class FoodDeliveryController extends Controller
             ->first();
 
         return response()->json($order);
+    }
+
+    public function orderSupportTickets(Request $request, int $id): JsonResponse
+    {
+        $order = FoodOrder::query()->where('user_id', $request->user()->id)->findOrFail($id);
+
+        return response()->json(
+            FoodOrderSupportTicket::query()
+                ->where('food_order_id', $order->id)
+                ->where('user_id', $request->user()->id)
+                ->latest()
+                ->paginate(20)
+        );
+    }
+
+    public function createOrderSupportTicket(Request $request, int $id): JsonResponse
+    {
+        $order = FoodOrder::query()->where('user_id', $request->user()->id)->findOrFail($id);
+        $data = $request->validate([
+            'subject' => ['required', 'string', 'max:160'],
+            'message' => ['required', 'string', 'max:2000'],
+        ]);
+
+        $ticket = FoodOrderSupportTicket::query()->create($data + [
+            'user_id' => $request->user()->id,
+            'food_order_id' => $order->id,
+        ]);
+
+        return response()->json([
+            'message' => 'সাপোর্ট রিকোয়েস্ট পাঠানো হয়েছে।',
+            'ticket' => $ticket,
+        ], 201);
     }
 
     public function cancelOrder(Request $request, int $id): JsonResponse

@@ -38,4 +38,9 @@ class FoodOrder extends Model
     {
         return $this->belongsTo(FoodAddress::class, 'food_address_id');
     }
+
+    public function supportTickets()
+    {
+        return $this->hasMany(FoodOrderSupportTicket::class);
+    }
 }

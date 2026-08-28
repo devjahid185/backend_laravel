@@ -21,6 +21,7 @@ use App\Models\FoodCategory;
 use App\Models\FoodCoupon;
 use App\Models\FoodItem;
 use App\Models\FoodOrder;
+use App\Models\FoodOrderSupportTicket;
 use App\Models\FoodReview;
 use App\Models\Hospital;
 use App\Models\HospitalCategory;
@@ -71,6 +72,7 @@ class AdminResourceController extends Controller
         'food-addresses' => FoodAddress::class,
         'food-coupons' => FoodCoupon::class,
         'food-orders' => FoodOrder::class,
+        'food-order-support-tickets' => FoodOrderSupportTicket::class,
         'food-reviews' => FoodReview::class,
         'riders' => Rider::class,
         'rider-documents' => RiderDocument::class,
