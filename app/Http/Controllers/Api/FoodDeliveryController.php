@@ -548,6 +548,41 @@ class FoodDeliveryController extends Controller
         return response()->json(['message' => 'Order placed', 'order' => $order], 201);
     }
 
+    public function deliveryChargePreview(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'delivery_lat' => ['required', 'numeric', 'between:-90,90'],
+            'delivery_lng' => ['required', 'numeric', 'between:-180,180'],
+        ]);
+
+        $cart = FoodCart::query()
+            ->with(['items', 'restaurant'])
+            ->where('user_id', $request->user()->id)
+            ->firstOrFail();
+        abort_if($cart->items->isEmpty(), 422, 'Cart is empty.');
+
+        $itemsTotal = (float) $cart->items->sum('total_price');
+        $charge = $this->deliveryCharge(
+            $cart->restaurant,
+            null,
+            (float) $data['delivery_lat'],
+            (float) $data['delivery_lng'],
+            $itemsTotal,
+        );
+        if ($charge['distance_km'] === null) {
+            $charge['distance_km'] = $this->orderRouteDistance($cart->restaurant, (float) $data['delivery_lat'], (float) $data['delivery_lng']);
+        }
+
+        return response()->json([
+            'items_total' => round($itemsTotal, 2),
+            'delivery_fee' => $charge['fee'],
+            'delivery_distance_km' => $charge['distance_km'],
+            'delivery_charge_mode' => $charge['mode'],
+            'delivery_charge_label' => $charge['label'] ?? null,
+            'grand_total' => round($itemsTotal + (float) $charge['fee'], 2),
+        ]);
+    }
+
     public function orders(Request $request): JsonResponse
     {
         return response()->json(FoodOrder::query()->with('restaurant:id,name,phone,address,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')->where('user_id', $request->user()->id)->latest()->paginate(20));
@@ -936,10 +971,6 @@ class FoodDeliveryController extends Controller
             return ['fee' => 0, 'distance_km' => null, 'mode' => 'free_delivery'];
         }
 
-        if ($settings->charge_mode === 'fixed') {
-            return ['fee' => round((float) $settings->fixed_charge, 2), 'distance_km' => null, 'mode' => 'fixed'];
-        }
-
         $originLat = $restaurant->lat !== null ? (float) $restaurant->lat : ($settings->store_lat !== null ? (float) $settings->store_lat : null);
         $originLng = $restaurant->lng !== null ? (float) $restaurant->lng : ($settings->store_lng !== null ? (float) $settings->store_lng : null);
         $distanceKm = ($originLat !== null && $originLng !== null && $lat !== null && $lng !== null)
@@ -950,10 +981,83 @@ class FoodDeliveryController extends Controller
             abort(422, 'Delivery location is outside the service area.');
         }
 
+        if ($settings->municipality_rule_enabled && $lat !== null && $lng !== null) {
+            return $this->municipalityDeliveryCharge($settings, $lat, $lng, $distanceKm);
+        }
+
+        if ($settings->charge_mode === 'fixed') {
+            return ['fee' => round((float) $settings->fixed_charge, 2), 'distance_km' => null, 'mode' => 'fixed'];
+        }
+
         $fee = (float) $settings->base_charge + (($distanceKm ?? 0) * (float) $settings->per_km_charge);
         $fee = max((float) $settings->minimum_charge, $fee);
 
         return ['fee' => round($fee, 2), 'distance_km' => $distanceKm === null ? null : round($distanceKm, 2), 'mode' => 'per_km'];
+    }
+
+    private function municipalityDeliveryCharge(FoodDeliverySetting $settings, float $lat, float $lng, ?float $distanceKm): array
+    {
+        $fixed = (float) ($settings->municipality_fixed_charge ?? 50);
+        $extraRate = (float) ($settings->municipality_extra_per_km_charge ?? 0);
+        if ($this->isInsideMunicipality($settings, $lat, $lng)) {
+            return [
+                'fee' => round($fixed, 2),
+                'distance_km' => $distanceKm === null ? null : round($distanceKm, 2),
+                'mode' => 'municipality_fixed',
+                'label' => 'Bhola Sadar Pourashava fixed charge',
+            ];
+        }
+
+        $outsideKm = $this->municipalityOutsideDistanceKm($settings, $lat, $lng, $distanceKm);
+        return [
+            'fee' => round($fixed + ($outsideKm * $extraRate), 2),
+            'distance_km' => $distanceKm === null ? null : round($distanceKm, 2),
+            'mode' => 'municipality_outside_per_km',
+            'label' => 'Pourashava outside extra per KM',
+        ];
+    }
+
+    private function isInsideMunicipality(FoodDeliverySetting $settings, float $lat, float $lng): bool
+    {
+        $polygon = $settings->municipality_polygon ?? [];
+        if (is_array($polygon) && count($polygon) >= 3) {
+            return $this->pointInPolygon($lat, $lng, $polygon);
+        }
+
+        if ($settings->municipality_center_lat !== null && $settings->municipality_center_lng !== null && $settings->municipality_radius_km !== null) {
+            return $this->distanceKm((float) $settings->municipality_center_lat, (float) $settings->municipality_center_lng, $lat, $lng) <= (float) $settings->municipality_radius_km;
+        }
+
+        return false;
+    }
+
+    private function municipalityOutsideDistanceKm(FoodDeliverySetting $settings, float $lat, float $lng, ?float $fallbackDistanceKm): float
+    {
+        if ($settings->municipality_center_lat !== null && $settings->municipality_center_lng !== null && $settings->municipality_radius_km !== null) {
+            $fromCenter = $this->distanceKm((float) $settings->municipality_center_lat, (float) $settings->municipality_center_lng, $lat, $lng);
+            return max(0, $fromCenter - (float) $settings->municipality_radius_km);
+        }
+
+        return max(0, (float) ($fallbackDistanceKm ?? 0));
+    }
+
+    private function pointInPolygon(float $lat, float $lng, array $polygon): bool
+    {
+        $inside = false;
+        $count = count($polygon);
+        for ($i = 0, $j = $count - 1; $i < $count; $j = $i++) {
+            $latI = (float) ($polygon[$i]['lat'] ?? 0);
+            $lngI = (float) ($polygon[$i]['lng'] ?? 0);
+            $latJ = (float) ($polygon[$j]['lat'] ?? 0);
+            $lngJ = (float) ($polygon[$j]['lng'] ?? 0);
+            $intersects = (($lngI > $lng) !== ($lngJ > $lng))
+                && ($lat < ($latJ - $latI) * ($lng - $lngI) / (($lngJ - $lngI) ?: 0.0000001) + $latI);
+            if ($intersects) {
+                $inside = ! $inside;
+            }
+        }
+
+        return $inside;
     }
 
     private function orderRouteDistance(?Restaurant $restaurant, ?float $lat, ?float $lng): ?float

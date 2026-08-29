@@ -333,6 +333,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
         Route::delete('/addresses/{id}', [FoodDeliveryController::class, 'deleteAddress'])->whereNumber('id');
         Route::get('/cart-count', [FoodDeliveryController::class, 'cartCount']);
         Route::get('/cart', [FoodDeliveryController::class, 'cart']);
+        Route::post('/delivery-charge-preview', [FoodDeliveryController::class, 'deliveryChargePreview']);
         Route::post('/cart/items', [FoodDeliveryController::class, 'addToCart']);
         Route::post('/cart/items/{id}', [FoodDeliveryController::class, 'updateCartItem'])->whereNumber('id');
         Route::delete('/cart/items/{id}', [FoodDeliveryController::class, 'removeCartItem'])->whereNumber('id');
