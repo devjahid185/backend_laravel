@@ -327,6 +327,9 @@ class AdminResourceController extends Controller
         $order->accepted_rider_name = $order->rider?->name;
         $order->accepted_rider_phone = $order->rider?->phone;
         $order->route_distance_km = $this->foodOrderDistanceKm($order);
+        $order->payment_proof_photo_url = $order->payment_proof_photo
+            ? asset('storage/'.$order->payment_proof_photo)
+            : null;
 
         return $order;
     }

@@ -316,12 +316,15 @@ class FoodDeliveryController extends Controller
     public function ownerOrders(Request $request): JsonResponse
     {
         $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
-        return response()->json(FoodOrder::query()
+        $orders = FoodOrder::query()
             ->with('items', 'restaurant:id,name,phone,address,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
             ->whereIn('restaurant_id', $restaurantIds)
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->query('status')))
             ->latest()
-            ->paginate(50));
+            ->paginate(50);
+        $orders->setCollection($orders->getCollection()->map(fn (FoodOrder $order) => $this->decoratePaymentProof($order)));
+
+        return response()->json($orders);
     }
 
     public function addresses(Request $request): JsonResponse
@@ -455,6 +458,8 @@ class FoodDeliveryController extends Controller
             'delivery_lat' => ['required_if:order_type,delivery', 'nullable', 'numeric', 'between:-90,90'],
             'delivery_lng' => ['required_if:order_type,delivery', 'nullable', 'numeric', 'between:-180,180'],
             'delivery_map_url' => ['nullable', 'string', 'max:255'],
+            'manual_transaction_id' => ['nullable', 'string', 'max:120'],
+            'payment_proof_photo' => ['nullable', 'file', 'image', 'max:4096'],
         ]);
         $cart = FoodCart::query()->with(['items.foodItem', 'restaurant'])->where('user_id', $request->user()->id)->firstOrFail();
         abort_if($cart->items->isEmpty(), 422, 'Cart is empty.');
@@ -480,7 +485,11 @@ class FoodDeliveryController extends Controller
         [$discount, $coupon] = $this->couponDiscount($data['coupon_code'] ?? null, $itemsTotal, $deliveryFee, $cart->restaurant_id);
         $grand = max(0, $itemsTotal + $deliveryFee - $discount);
 
-        $order = DB::transaction(function () use ($request, $cart, $address, $data, $itemsTotal, $deliveryFee, $discount, $coupon, $grand, $charge, $paymentMethod) {
+        $proofPhotoPath = $request->hasFile('payment_proof_photo')
+            ? $request->file('payment_proof_photo')->store('food/payment-proofs', 'public')
+            : null;
+
+        $order = DB::transaction(function () use ($request, $cart, $address, $data, $itemsTotal, $deliveryFee, $discount, $coupon, $grand, $charge, $paymentMethod, $proofPhotoPath) {
             $order = FoodOrder::query()->create([
                 'order_no' => 'FD-' . now()->format('ymd') . '-' . strtoupper(Str::random(6)),
                 'user_id' => $request->user()->id,
@@ -496,6 +505,12 @@ class FoodDeliveryController extends Controller
                 'delivery_map_url' => $data['delivery_map_url'] ?? $this->mapUrl($data['delivery_lat'] ?? $address?->lat, $data['delivery_lng'] ?? $address?->lng),
                 'order_type' => $data['order_type'] ?? 'delivery',
                 'payment_method' => $paymentMethod,
+                'manual_transaction_id' => in_array($paymentMethod, ['manual_bkash', 'manual_nagad'], true)
+                    ? ($data['manual_transaction_id'] ?? null)
+                    : null,
+                'payment_proof_photo' => in_array($paymentMethod, ['manual_bkash', 'manual_nagad'], true)
+                    ? $proofPhotoPath
+                    : null,
                 'items_total' => $itemsTotal,
                 'delivery_fee' => $deliveryFee,
                 'delivery_distance_km' => $charge['distance_km'],
@@ -526,6 +541,7 @@ class FoodDeliveryController extends Controller
                 FoodOrderItem::query()->create($itemPayload);
             }
             $cart->items()->delete();
+            $this->decoratePaymentProof($order);
             return $order->load('items', 'restaurant:id,name,phone,address,lat,lng');
         });
         $this->notifyRestaurantOwner($order);
@@ -543,6 +559,7 @@ class FoodDeliveryController extends Controller
             ->with('items', 'supportTickets:id,food_order_id,subject,message,status,admin_reply,created_at,updated_at', 'restaurant:id,name,phone,address,opening_hours,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
             ->where('user_id', $request->user()->id)
             ->findOrFail($id);
+        $this->decoratePaymentProof($order);
         $order->review = $this->foodReviewQuery()
             ->where('user_id', $request->user()->id)
             ->where('food_order_id', $order->id)
@@ -1212,5 +1229,13 @@ class FoodDeliveryController extends Controller
                 'data' => $data,
             ]);
         }
+    }
+
+    private function decoratePaymentProof(FoodOrder $order): FoodOrder
+    {
+        $path = $order->payment_proof_photo;
+        $order->payment_proof_photo_url = $path ? asset('storage/'.$path) : null;
+
+        return $order;
     }
 }
