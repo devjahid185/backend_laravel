@@ -9,24 +9,57 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Artisan::command('medicine:import-medex {path : Path to medex.db SQLite file}', function (string $path): int {
+Artisan::command('medicine:import-medex {path : Path to medex.db SQLite/CSV file}', function (string $path): int {
     if (! is_file($path)) {
-        $this->error("SQLite file not found: {$path}");
+        $this->error("Medicine source file not found: {$path}");
         return 1;
     }
 
-    $source = new PDO('sqlite:'.$path);
-    $source->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $total = (int) $source->query('SELECT COUNT(*) FROM medicines')->fetchColumn();
+    $columns = [
+        'id', 'slug', 'brand_name', 'dosage_form', 'strength', 'generic_name', 'generic_id', 'company', 'company_id',
+        'unit_price', 'price_text', 'pack_sizes', 'indications', 'composition', 'pharmacology', 'dosage_and_administration',
+        'interaction', 'contraindications', 'side_effects', 'pregnancy_and_lactation', 'precautions_and_warnings',
+        'overdose_effects', 'therapeutic_class', 'storage_conditions', 'sections_json',
+    ];
+
+    $readChunk = function (int $limit, int $offset) use ($path, $columns) {
+        if (str_ends_with(strtolower($path), '.csv')) {
+            $handle = fopen($path, 'r');
+            if (! $handle) {
+                return [];
+            }
+            $rows = [];
+            $line = 0;
+            while (($data = fgetcsv($handle)) !== false) {
+                if ($line++ < $offset) {
+                    continue;
+                }
+                if (count($rows) >= $limit) {
+                    break;
+                }
+                $rows[] = array_combine($columns, array_pad($data, count($columns), null));
+            }
+            fclose($handle);
+            return $rows;
+        }
+
+        $source = new PDO('sqlite:'.$path);
+        $source->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $source
+            ->query("SELECT * FROM medicines ORDER BY id LIMIT {$limit} OFFSET {$offset}")
+            ->fetchAll(PDO::FETCH_ASSOC);
+    };
+
+    $total = str_ends_with(strtolower($path), '.csv')
+        ? max(0, count(file($path, FILE_SKIP_EMPTY_LINES)))
+        : (int) (new PDO('sqlite:'.$path))->query('SELECT COUNT(*) FROM medicines')->fetchColumn();
     $this->info("Importing {$total} medicines...");
 
     $offset = 0;
     $limit = 500;
     $imported = 0;
     while ($offset < $total) {
-        $rows = $source
-            ->query("SELECT * FROM medicines ORDER BY id LIMIT {$limit} OFFSET {$offset}")
-            ->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $readChunk($limit, $offset);
         $payload = [];
         foreach ($rows as $row) {
             $unitPrice = preg_replace('/[^0-9.]/', '', (string) ($row['unit_price'] ?? ''));
