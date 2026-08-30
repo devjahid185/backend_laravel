@@ -32,6 +32,9 @@ use App\Models\JobPost;
 use App\Models\LaunchService;
 use App\Models\MarketplaceItem;
 use App\Models\MarketplaceCategory;
+use App\Models\MedicineItem;
+use App\Models\MedicineOrder;
+use App\Models\MedicineOrderItem;
 use App\Models\Message;
 use App\Models\News;
 use App\Models\Notice;
@@ -74,6 +77,9 @@ class AdminResourceController extends Controller
         'food-orders' => FoodOrder::class,
         'food-order-support-tickets' => FoodOrderSupportTicket::class,
         'food-reviews' => FoodReview::class,
+        'medicine-items' => MedicineItem::class,
+        'medicine-orders' => MedicineOrder::class,
+        'medicine-order-items' => MedicineOrderItem::class,
         'riders' => Rider::class,
         'rider-documents' => RiderDocument::class,
         'rider-wallet' => RiderWalletEntry::class,
@@ -122,6 +128,9 @@ class AdminResourceController extends Controller
                 'riderRequests as total_rider_requests_count',
             ]);
             $this->applyFoodOrderFilters($query, $request);
+        }
+        if ($resource === 'medicine-orders') {
+            $query->with('items');
         }
         $search = trim((string) $request->query('search', ''));
         if ($search !== '') {
@@ -172,6 +181,9 @@ class AdminResourceController extends Controller
         }
         if ($resource === 'riders') {
             $query->with(['documents', 'user:id,name,phone,email']);
+        }
+        if ($resource === 'medicine-orders') {
+            $query->with('items');
         }
 
         $record = $query->findOrFail($id);

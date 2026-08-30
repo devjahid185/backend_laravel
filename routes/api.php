@@ -49,6 +49,7 @@ use App\Http\Controllers\Api\LaunchController;
 use App\Http\Controllers\Api\MarketplaceController;
 use App\Http\Controllers\Api\MapSettingController;
 use App\Http\Controllers\Api\MediaController;
+use App\Http\Controllers\Api\MedicineDeliveryController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\NewsController;
 use App\Http\Controllers\Api\NoticeController;
@@ -350,6 +351,20 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
         Route::post('/favorites/toggle', [FoodDeliveryController::class, 'toggleFavorite']);
         Route::get('/reviews', [FoodDeliveryController::class, 'reviews']);
         Route::post('/reviews', [FoodDeliveryController::class, 'review']);
+    });
+
+    Route::prefix('medicine')->group(function (): void {
+        Route::get('/home', [MedicineDeliveryController::class, 'home']);
+        Route::get('/items', [MedicineDeliveryController::class, 'items']);
+        Route::get('/items/{id}', [MedicineDeliveryController::class, 'item'])->whereNumber('id');
+        Route::get('/cart-count', [MedicineDeliveryController::class, 'cartCount']);
+        Route::get('/cart', [MedicineDeliveryController::class, 'cart']);
+        Route::post('/cart/items', [MedicineDeliveryController::class, 'addToCart']);
+        Route::post('/cart/items/{id}', [MedicineDeliveryController::class, 'updateCartItem'])->whereNumber('id');
+        Route::delete('/cart/items/{id}', [MedicineDeliveryController::class, 'removeCartItem'])->whereNumber('id');
+        Route::post('/checkout', [MedicineDeliveryController::class, 'checkout']);
+        Route::get('/orders', [MedicineDeliveryController::class, 'orders']);
+        Route::get('/orders/{id}', [MedicineDeliveryController::class, 'order'])->whereNumber('id');
     });
 
     Route::get('/education/categories', [EducationController::class, 'categories']);
