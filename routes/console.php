@@ -151,3 +151,42 @@ Artisan::command('medicine:import-images {path : CSV with source_id,image_url}',
     $this->info("Imported {$updated} medicine images.");
     return 0;
 })->purpose('Import MedEx medicine pack image URLs by source id');
+
+Artisan::command('medicine:fill-dosage-images', function (): int {
+    $map = [
+        'tablet' => 'tablet.png',
+        'capsule' => 'capsule.png',
+        'syrup' => 'syrup.png',
+        'suspension' => 'suspension.png',
+        'oral suspension' => 'suspension.png',
+        'injection' => 'injection.png',
+        'iv injection' => 'injection.png',
+        'im/iv injection' => 'injection.png',
+        'cream' => 'cream.png',
+        'ointment' => 'ointment.png',
+        'gel' => 'gel.png',
+        'drop' => 'drop.png',
+        'eye drop' => 'eye-drop.png',
+        'oral drop' => 'drop.png',
+        'powder' => 'powder.png',
+        'oral powder' => 'powder.png',
+        'suppository' => 'suppository.png',
+        'inhaler' => 'inhaler.png',
+        'spray' => 'spray.png',
+        'solution' => 'solution.png',
+    ];
+
+    $updated = 0;
+    foreach ($map as $form => $file) {
+        $updated += DB::table('medicine_items')
+            ->whereNull('image_url')
+            ->whereRaw('LOWER(dosage_form) = ?', [$form])
+            ->update([
+                'image_url' => 'https://medex.com.bd/img/dosage-forms/'.$file,
+                'updated_at' => now(),
+            ]);
+    }
+
+    $this->info("Filled {$updated} dosage fallback images.");
+    return 0;
+})->purpose('Fill missing medicine images with MedEx dosage form icons');
