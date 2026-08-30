@@ -20,10 +20,20 @@ class MedicineDeliveryController extends Controller
     {
         return response()->json([
             'promoted_items' => $this->decorateItems(
-                MedicineItem::query()->where('is_available', true)->where('is_promoted', true)->inRandomOrder()->limit(16)->get()
+                MedicineItem::query()
+                    ->where('is_available', true)
+                    ->where('is_promoted', true)
+                    ->latest('updated_at')
+                    ->limit(12)
+                    ->get()
             ),
             'items' => $this->decorateItems(
-                MedicineItem::query()->where('is_available', true)->inRandomOrder()->limit(30)->get()
+                MedicineItem::query()
+                    ->where('is_available', true)
+                    ->orderByDesc('is_promoted')
+                    ->orderBy('brand_name')
+                    ->limit(20)
+                    ->get()
             ),
             'dosage_forms' => MedicineItem::query()->whereNotNull('dosage_form')->distinct()->orderBy('dosage_form')->limit(24)->pluck('dosage_form'),
             'companies' => MedicineItem::query()->whereNotNull('company')->distinct()->orderBy('company')->limit(24)->pluck('company'),
