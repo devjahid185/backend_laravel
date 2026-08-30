@@ -343,6 +343,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
         Route::get('/orders/{id}', [FoodDeliveryController::class, 'order'])->whereNumber('id');
         Route::get('/orders/{id}/support-tickets', [FoodDeliveryController::class, 'orderSupportTickets'])->whereNumber('id');
         Route::post('/orders/{id}/support-tickets', [FoodDeliveryController::class, 'createOrderSupportTicket'])->whereNumber('id');
+        Route::post('/orders/{id}/payment-proof', [FoodDeliveryController::class, 'updateOrderPaymentProof'])->whereNumber('id');
         Route::post('/orders/{id}/cancel', [FoodDeliveryController::class, 'cancelOrder'])->whereNumber('id');
         Route::post('/orders/{id}/status', [FoodDeliveryController::class, 'updateOrderStatus'])->whereNumber('id');
         Route::get('/favorites', [FoodDeliveryController::class, 'favorites']);

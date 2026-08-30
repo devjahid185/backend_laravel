@@ -601,16 +601,44 @@ class FoodDeliveryController extends Controller
     public function order(Request $request, int $id): JsonResponse
     {
         $order = FoodOrder::query()
-            ->with('items', 'supportTickets:id,food_order_id,subject,message,status,admin_reply,created_at,updated_at', 'restaurant:id,name,phone,address,opening_hours,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
+            ->with('items', 'supportTickets:id,food_order_id,subject,message,status,admin_reply,created_at,updated_at', 'restaurant:id,name,phone,address,opening_hours,lat,lng,cod_enabled,manual_bkash_number,manual_nagad_number,manual_payment_instructions', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
             ->where('user_id', $request->user()->id)
             ->findOrFail($id);
         $this->decoratePaymentProof($order);
+        if ($order->restaurant) {
+            $order->restaurant->payment_options = $this->restaurantPaymentOptions($order->restaurant);
+        }
         $order->review = $this->foodReviewQuery()
             ->where('user_id', $request->user()->id)
             ->where('food_order_id', $order->id)
             ->first();
 
         return response()->json($order);
+    }
+
+    public function updateOrderPaymentProof(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate([
+            'manual_transaction_id' => ['required', 'string', 'max:120'],
+            'payment_proof_photo' => ['nullable', 'file', 'image', 'max:4096'],
+        ]);
+        $order = FoodOrder::query()
+            ->where('user_id', $request->user()->id)
+            ->whereIn('payment_method', ['manual_bkash', 'manual_nagad'])
+            ->findOrFail($id);
+        abort_if($order->payment_status === 'paid', 422, 'Payment is already marked as paid.');
+
+        $order->manual_transaction_id = $data['manual_transaction_id'];
+        if ($request->hasFile('payment_proof_photo')) {
+            $order->payment_proof_photo = $request->file('payment_proof_photo')->store('food/payment-proofs', 'public');
+        }
+        $order->save();
+        $this->decoratePaymentProof($order);
+
+        return response()->json([
+            'message' => 'Payment information submitted for verification.',
+            'order' => $order,
+        ]);
     }
 
     public function orderSupportTickets(Request $request, int $id): JsonResponse
