@@ -27,4 +27,35 @@ class FoodItem extends Model
     {
         return $this->belongsTo(FoodCategory::class, 'food_category_id');
     }
+
+    public function setSizeOptionsAttribute($value): void
+    {
+        $this->attributes['size_options'] = json_encode(collect($value ?? [])
+            ->map(function ($option) {
+                if (is_array($option)) {
+                    $name = trim((string) ($option['name'] ?? $option['label'] ?? ''));
+                    $price = $option['price'] ?? null;
+                } else {
+                    $name = trim((string) $option);
+                    $price = null;
+                }
+
+                return $name === '' ? null : [
+                    'name' => $name,
+                    'price' => $price === null || $price === '' ? null : round((float) $price, 2),
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all());
+    }
+
+    public function setSpiceOptionsAttribute($value): void
+    {
+        $this->attributes['spice_options'] = json_encode(collect($value ?? [])
+            ->map(fn ($option) => trim((string) $option))
+            ->filter()
+            ->values()
+            ->all());
+    }
 }

@@ -289,6 +289,12 @@ class FoodDeliveryController extends Controller
         ]);
 
         $this->ownedRestaurant($request, (int) $data['restaurant_id']);
+        if (array_key_exists('size_options', $data)) {
+            $data['size_options'] = $this->normalizeSizeOptions($data['size_options']);
+        }
+        if (array_key_exists('spice_options', $data)) {
+            $data['spice_options'] = $this->cleanStringOptions($data['spice_options']);
+        }
         $payload = $data + ['status' => 'active', 'is_available' => true, 'preparation_minutes' => 20];
         if (empty($payload['slug'])) {
             $payload['slug'] = Str::slug($payload['name']) ?: 'food-item';
@@ -405,7 +411,7 @@ class FoodDeliveryController extends Controller
         $cart->save();
 
         $quantity = (int) ($data['quantity'] ?? 1);
-        $unit = (float) ($item->discount_price ?: $item->price);
+        $unit = $this->unitPriceForSize($item, $data['size'] ?? null);
         FoodCartItem::query()->create([
             'food_cart_id' => $cart->id,
             'food_item_id' => $item->id,
@@ -874,6 +880,8 @@ class FoodDeliveryController extends Controller
     private function decorateFoodItem(FoodItem $item): FoodItem
     {
         $item->image_url = MediaLookup::primaryUrlMap('food_item', [$item->id])[$item->id] ?? null;
+        $item->size_options = $this->normalizeSizeOptions($item->size_options ?? [], (float) ($item->discount_price ?: $item->price));
+        $item->spice_options = $this->cleanStringOptions($item->spice_options ?? []);
         return $item;
     }
 
@@ -882,8 +890,61 @@ class FoodDeliveryController extends Controller
         $imageMap = MediaLookup::primaryUrlMap('food_item', $items->pluck('id')->all());
         return $items->map(function (FoodItem $item) use ($imageMap) {
             $item->image_url = $imageMap[$item->id] ?? null;
+            $item->size_options = $this->normalizeSizeOptions($item->size_options ?? [], (float) ($item->discount_price ?: $item->price));
+            $item->spice_options = $this->cleanStringOptions($item->spice_options ?? []);
             return $item;
         });
+    }
+
+    private function unitPriceForSize(FoodItem $item, ?string $size): float
+    {
+        $basePrice = (float) ($item->discount_price ?: $item->price);
+        $size = trim((string) $size);
+        if ($size === '') {
+            return $basePrice;
+        }
+
+        foreach ($this->normalizeSizeOptions($item->size_options ?? [], $basePrice) as $option) {
+            if (strcasecmp((string) ($option['name'] ?? ''), $size) === 0) {
+                return (float) ($option['price'] ?? $basePrice);
+            }
+        }
+
+        return $basePrice;
+    }
+
+    private function normalizeSizeOptions(?array $options, ?float $fallbackPrice = null): array
+    {
+        return collect($options ?? [])
+            ->map(function ($option) use ($fallbackPrice) {
+                if (is_array($option)) {
+                    $name = trim((string) ($option['name'] ?? $option['label'] ?? ''));
+                    $price = $option['price'] ?? $fallbackPrice;
+                } else {
+                    $name = trim((string) $option);
+                    $price = $fallbackPrice;
+                }
+                if ($name === '') {
+                    return null;
+                }
+
+                return [
+                    'name' => $name,
+                    'price' => $price === null || $price === '' ? null : round((float) $price, 2),
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    private function cleanStringOptions(?array $options): array
+    {
+        return collect($options ?? [])
+            ->map(fn ($option) => trim((string) $option))
+            ->filter()
+            ->values()
+            ->all();
     }
 
     private function decorateFoodBanners($banners, Request $request)
