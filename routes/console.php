@@ -63,6 +63,10 @@ Artisan::command('medicine:import-medex {path : Path to medex.db SQLite/CSV file
         $payload = [];
         foreach ($rows as $row) {
             $unitPrice = preg_replace('/[^0-9.]/', '', (string) ($row['unit_price'] ?? ''));
+            $sectionsJson = $row['sections_json'] ?: null;
+            if ($sectionsJson !== null && json_decode($sectionsJson, true) === null && json_last_error() !== JSON_ERROR_NONE) {
+                $sectionsJson = null;
+            }
             $payload[] = [
                 'source_id' => $row['id'],
                 'slug' => $row['slug'] ?: Str::slug(($row['brand_name'] ?? 'medicine').'-'.$row['id']),
@@ -88,7 +92,7 @@ Artisan::command('medicine:import-medex {path : Path to medex.db SQLite/CSV file
                 'overdose_effects' => $row['overdose_effects'] ?: null,
                 'therapeutic_class' => $row['therapeutic_class'] ?: null,
                 'storage_conditions' => $row['storage_conditions'] ?: null,
-                'sections' => $row['sections_json'] ?: null,
+                'sections' => $sectionsJson,
                 'is_available' => true,
                 'updated_at' => now(),
                 'created_at' => now(),
