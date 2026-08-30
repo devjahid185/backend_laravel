@@ -939,7 +939,27 @@ class FoodDeliveryController extends Controller
             ];
         })->values();
         $itemsTotal = (float) $cart->items->sum('total_price');
-        $deliveryFee = $cart->restaurant_id ? $this->deliveryFee($cart->restaurant, null) : 0;
+        $selectedAddress = FoodAddress::query()
+            ->where('user_id', $userId)
+            ->orderByDesc('is_default')
+            ->latest('id')
+            ->first();
+        $deliveryLat = $selectedAddress?->lat !== null ? (float) $selectedAddress->lat : null;
+        $deliveryLng = $selectedAddress?->lng !== null ? (float) $selectedAddress->lng : null;
+        $settings = FoodDeliverySetting::current();
+        $needsExactLocation = (bool) ($settings->municipality_rule_enabled ?? false);
+        $charge = ['fee' => 0, 'distance_km' => null, 'mode' => 'disabled', 'label' => null];
+        if ($cart->restaurant_id) {
+            $charge = ($needsExactLocation && ($deliveryLat === null || $deliveryLng === null))
+                ? [
+                    'fee' => null,
+                    'distance_km' => null,
+                    'mode' => 'location_required',
+                    'label' => 'Checkout এ লোকেশন দিলে ডেলিভারি চার্জ হিসাব হবে',
+                ]
+                : $this->deliveryCharge($cart->restaurant, $selectedAddress?->area, $deliveryLat, $deliveryLng, $itemsTotal);
+        }
+        $deliveryFee = $charge['fee'];
         return [
             'cart' => $cart,
             'restaurant' => $cart->restaurant,
@@ -947,7 +967,10 @@ class FoodDeliveryController extends Controller
             'items' => $items,
             'items_total' => $itemsTotal,
             'delivery_fee' => $deliveryFee,
-            'grand_total' => $itemsTotal + $deliveryFee,
+            'delivery_distance_km' => $charge['distance_km'] ?? null,
+            'delivery_charge_mode' => $charge['mode'] ?? null,
+            'delivery_charge_label' => $charge['label'] ?? null,
+            'grand_total' => $itemsTotal + (float) ($deliveryFee ?? 0),
         ];
     }
 
