@@ -37,7 +37,7 @@ Artisan::command('medicine:import-medex {path : Path to medex.db SQLite/CSV file
                 if (count($rows) >= $limit) {
                     break;
                 }
-                $rows[] = array_combine($columns, array_pad($data, count($columns), null));
+                $rows[] = array_combine($columns, array_slice(array_pad($data, count($columns), null), 0, count($columns)));
             }
             fclose($handle);
             return $rows;
