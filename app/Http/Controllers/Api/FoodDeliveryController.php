@@ -39,8 +39,11 @@ class FoodDeliveryController extends Controller
             ->with('restaurant:id,name,address,phone')
             ->where('status', 'active')
             ->where('is_available', true)
-            ->where('is_popular', true)
-            ->latest()
+            ->where(function ($query): void {
+                $query->where('is_promoted', true)->orWhere('is_popular', true);
+            })
+            ->orderByDesc('is_promoted')
+            ->inRandomOrder()
             ->limit(16)
             ->get();
 
@@ -84,8 +87,8 @@ class FoodDeliveryController extends Controller
         $items = FoodItem::query()
             ->where('restaurant_id', $id)
             ->where('status', 'active')
-            ->orderByDesc('is_popular')
-            ->orderBy('name')
+            ->orderByDesc('is_promoted')
+            ->inRandomOrder()
             ->get();
         $restaurant->menu_categories = FoodCategory::query()
             ->whereIn('id', $items->pluck('food_category_id')->filter()->unique())
@@ -129,8 +132,8 @@ class FoodDeliveryController extends Controller
                 });
             })
             ->when($request->filled('category_id'), fn ($q) => $q->where('food_category_id', (int) $request->query('category_id')))
-            ->orderByDesc('is_popular')
-            ->latest()
+            ->orderByDesc('is_promoted')
+            ->inRandomOrder()
             ->paginate((int) min(max((int) $request->query('per_page', 30), 1), 100));
 
         $items->setCollection($this->decorateFoodItems($items->getCollection()));
@@ -285,6 +288,7 @@ class FoodDeliveryController extends Controller
             'add_ons' => ['nullable', 'array'],
             'is_available' => ['nullable', 'boolean'],
             'is_popular' => ['nullable', 'boolean'],
+            'is_promoted' => ['nullable', 'boolean'],
             'status' => ['nullable', 'in:active,pending,inactive'],
         ]);
 

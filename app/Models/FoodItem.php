@@ -14,6 +14,7 @@ class FoodItem extends Model
         'add_ons' => 'array',
         'is_available' => 'boolean',
         'is_popular' => 'boolean',
+        'is_promoted' => 'boolean',
         'price' => 'decimal:2',
         'discount_price' => 'decimal:2',
     ];
