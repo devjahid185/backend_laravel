@@ -113,3 +113,41 @@ Artisan::command('medicine:import-medex {path : Path to medex.db SQLite/CSV file
     $this->info('Medicine import complete.');
     return 0;
 })->purpose('Import Bangladeshi medicine data from NasirSunny50/Bangladeshi-Medicine-API medex.db');
+
+Artisan::command('medicine:import-images {path : CSV with source_id,image_url}', function (string $path): int {
+    if (! is_file($path)) {
+        $this->error("Image CSV file not found: {$path}");
+        return 1;
+    }
+
+    $handle = fopen($path, 'r');
+    if (! $handle) {
+        $this->error("Unable to open: {$path}");
+        return 1;
+    }
+
+    $header = fgetcsv($handle);
+    $sourceIndex = array_search('source_id', $header ?: [], true);
+    $imageIndex = array_search('image_url', $header ?: [], true);
+    if ($sourceIndex === false || $imageIndex === false) {
+        fclose($handle);
+        $this->error('CSV must include source_id and image_url headers.');
+        return 1;
+    }
+
+    $updated = 0;
+    while (($row = fgetcsv($handle)) !== false) {
+        $sourceId = (int) ($row[$sourceIndex] ?? 0);
+        $imageUrl = trim((string) ($row[$imageIndex] ?? ''));
+        if ($sourceId <= 0 || $imageUrl === '') {
+            continue;
+        }
+        $updated += DB::table('medicine_items')
+            ->where('source_id', $sourceId)
+            ->update(['image_url' => $imageUrl, 'updated_at' => now()]);
+    }
+    fclose($handle);
+
+    $this->info("Imported {$updated} medicine images.");
+    return 0;
+})->purpose('Import MedEx medicine pack image URLs by source id');
