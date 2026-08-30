@@ -542,7 +542,7 @@ class FoodDeliveryController extends Controller
             }
             $cart->items()->delete();
             $this->decoratePaymentProof($order);
-            return $order->load('items', 'restaurant:id,name,phone,address,lat,lng');
+            return $order->load('items', 'restaurant:id,name,user_id,phone,address,lat,lng');
         });
         $this->notifyRestaurantOwner($order);
         return response()->json(['message' => 'Order placed', 'order' => $order], 201);
