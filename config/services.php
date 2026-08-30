@@ -53,4 +53,10 @@ return [
         'project_id' => env('FCM_PROJECT_ID'),
     ],
 
+    'medicine_payment' => [
+        'bkash_number' => env('MEDICINE_BKASH_NUMBER'),
+        'nagad_number' => env('MEDICINE_NAGAD_NUMBER'),
+        'instructions' => env('MEDICINE_PAYMENT_INSTRUCTIONS'),
+    ],
+
 ];

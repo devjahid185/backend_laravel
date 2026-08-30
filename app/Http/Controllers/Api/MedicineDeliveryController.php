@@ -126,6 +126,35 @@ class MedicineDeliveryController extends Controller
         return response()->json(['message' => 'Removed']);
     }
 
+    public function deliveryChargePreview(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'delivery_lat' => ['required', 'numeric', 'between:-90,90'],
+            'delivery_lng' => ['required', 'numeric', 'between:-180,180'],
+        ]);
+
+        $cart = $this->cartFor($request)->load('items');
+        if ($cart->items->isEmpty()) {
+            return response()->json(['message' => 'Cart is empty.'], 422);
+        }
+
+        $itemsTotal = round((float) $cart->items->sum('total_price'), 2);
+        $charge = $this->deliveryCharge(
+            (float) $data['delivery_lat'],
+            (float) $data['delivery_lng'],
+            $itemsTotal,
+        );
+
+        return response()->json([
+            'items_total' => $itemsTotal,
+            'delivery_fee' => $charge['fee'],
+            'delivery_distance_km' => $charge['distance_km'],
+            'delivery_charge_mode' => $charge['mode'],
+            'delivery_charge_label' => $charge['label'] ?? null,
+            'grand_total' => round($itemsTotal + (float) ($charge['fee'] ?? 0), 2),
+        ]);
+    }
+
     public function checkout(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -133,9 +162,12 @@ class MedicineDeliveryController extends Controller
             'receiver_phone' => ['required', 'string', 'max:40'],
             'delivery_address' => ['required', 'string', 'max:1000'],
             'delivery_area' => ['nullable', 'string', 'max:120'],
-            'delivery_lat' => ['nullable', 'numeric', 'between:-90,90'],
-            'delivery_lng' => ['nullable', 'numeric', 'between:-180,180'],
-            'payment_method' => ['nullable', 'string', 'max:40'],
+            'delivery_lat' => ['required', 'numeric', 'between:-90,90'],
+            'delivery_lng' => ['required', 'numeric', 'between:-180,180'],
+            'delivery_map_url' => ['nullable', 'string', 'max:255'],
+            'payment_method' => ['nullable', 'in:cash_on_delivery,manual_bkash,manual_nagad,online'],
+            'manual_transaction_id' => ['nullable', 'string', 'max:120'],
+            'payment_proof_photo' => ['nullable', 'file', 'image', 'max:4096'],
             'order_note' => ['nullable', 'string', 'max:1000'],
         ]);
 
@@ -145,9 +177,19 @@ class MedicineDeliveryController extends Controller
         }
 
         $itemsTotal = round((float) $cart->items->sum('total_price'), 2);
-        $deliveryFee = $this->deliveryFee();
+        $paymentMethod = $data['payment_method'] ?? 'cash_on_delivery';
+        abort_unless($this->supportsPayment($paymentMethod), 422, 'Selected payment method is not available.');
+        $charge = $this->deliveryCharge(
+            (float) $data['delivery_lat'],
+            (float) $data['delivery_lng'],
+            $itemsTotal,
+        );
+        $deliveryFee = (float) $charge['fee'];
+        $proofPhotoPath = $request->hasFile('payment_proof_photo')
+            ? $request->file('payment_proof_photo')->store('medicine/payment-proofs', 'public')
+            : null;
 
-        $order = DB::transaction(function () use ($request, $cart, $data, $itemsTotal, $deliveryFee) {
+        $order = DB::transaction(function () use ($request, $cart, $data, $itemsTotal, $deliveryFee, $paymentMethod, $proofPhotoPath, $charge) {
             $order = MedicineOrder::query()->create([
                 'order_no' => 'MD-' . now()->format('ymd') . '-' . strtoupper(Str::random(6)),
                 'user_id' => $request->user()->id,
@@ -157,12 +199,18 @@ class MedicineDeliveryController extends Controller
                 'delivery_area' => $data['delivery_area'] ?? null,
                 'delivery_lat' => $data['delivery_lat'] ?? null,
                 'delivery_lng' => $data['delivery_lng'] ?? null,
-                'delivery_map_url' => isset($data['delivery_lat'], $data['delivery_lng'])
-                    ? 'https://www.google.com/maps/search/?api=1&query='.$data['delivery_lat'].','.$data['delivery_lng']
+                'delivery_map_url' => $data['delivery_map_url'] ?? $this->mapUrl($data['delivery_lat'], $data['delivery_lng']),
+                'payment_method' => $paymentMethod,
+                'manual_transaction_id' => in_array($paymentMethod, ['manual_bkash', 'manual_nagad'], true)
+                    ? ($data['manual_transaction_id'] ?? null)
                     : null,
-                'payment_method' => $data['payment_method'] ?? 'cash_on_delivery',
+                'payment_proof_photo' => in_array($paymentMethod, ['manual_bkash', 'manual_nagad'], true)
+                    ? $proofPhotoPath
+                    : null,
                 'items_total' => $itemsTotal,
                 'delivery_fee' => $deliveryFee,
+                'delivery_distance_km' => $charge['distance_km'],
+                'delivery_charge_mode' => $charge['mode'],
                 'grand_total' => round($itemsTotal + $deliveryFee, 2),
                 'order_note' => $data['order_note'] ?? null,
             ]);
@@ -183,7 +231,7 @@ class MedicineDeliveryController extends Controller
             }
 
             $cart->items()->delete();
-            return $order->load('items');
+            return $this->decorateOrder($order->load('items'));
         });
 
         return response()->json(['message' => 'Order placed', 'order' => $order], 201);
@@ -191,12 +239,16 @@ class MedicineDeliveryController extends Controller
 
     public function orders(Request $request): JsonResponse
     {
-        return response()->json(MedicineOrder::query()->with('items')->where('user_id', $request->user()->id)->latest()->paginate(20));
+        $orders = MedicineOrder::query()->with('items')->where('user_id', $request->user()->id)->latest()->paginate(20);
+        $orders->setCollection($orders->getCollection()->map(fn (MedicineOrder $order) => $this->decorateOrder($order)));
+        return response()->json($orders);
     }
 
     public function order(Request $request, int $id): JsonResponse
     {
-        return response()->json(MedicineOrder::query()->with('items')->where('user_id', $request->user()->id)->findOrFail($id));
+        return response()->json($this->decorateOrder(
+            MedicineOrder::query()->with('items')->where('user_id', $request->user()->id)->findOrFail($id)
+        ));
     }
 
     private function cartFor(Request $request): MedicineCart
@@ -220,6 +272,10 @@ class MedicineDeliveryController extends Controller
             ])->values(),
             'items_total' => $itemsTotal,
             'delivery_fee' => $deliveryFee,
+            'delivery_distance_km' => null,
+            'delivery_charge_mode' => 'fixed',
+            'delivery_charge_label' => 'Checkout এ লোকেশন দিলে ডেলিভারি চার্জ আপডেট হবে',
+            'payment_options' => $this->paymentOptions(),
             'grand_total' => round($itemsTotal + $deliveryFee, 2),
         ];
     }
@@ -268,5 +324,172 @@ class MedicineDeliveryController extends Controller
             return (float) ($setting->municipality_fixed_charge ?? $setting->fixed_charge ?? 50);
         }
         return (float) ($setting->fixed_charge ?? $setting->minimum_charge ?? 40);
+    }
+
+    private function deliveryCharge(?float $lat, ?float $lng, float $itemsTotal): array
+    {
+        $settings = FoodDeliverySetting::current();
+        if (! $settings->is_enabled) {
+            return ['fee' => 0, 'distance_km' => null, 'mode' => 'disabled'];
+        }
+
+        if ($settings->free_delivery_min_order !== null && $itemsTotal >= (float) $settings->free_delivery_min_order) {
+            return ['fee' => 0, 'distance_km' => null, 'mode' => 'free_delivery'];
+        }
+
+        $originLat = $settings->store_lat !== null
+            ? (float) $settings->store_lat
+            : ($settings->municipality_center_lat !== null ? (float) $settings->municipality_center_lat : null);
+        $originLng = $settings->store_lng !== null
+            ? (float) $settings->store_lng
+            : ($settings->municipality_center_lng !== null ? (float) $settings->municipality_center_lng : null);
+        $distanceKm = ($originLat !== null && $originLng !== null && $lat !== null && $lng !== null)
+            ? $this->distanceKm($originLat, $originLng, $lat, $lng)
+            : null;
+
+        if ($distanceKm !== null && $settings->max_delivery_distance_km !== null && $distanceKm > (float) $settings->max_delivery_distance_km) {
+            abort(422, 'Delivery location is outside the service area.');
+        }
+
+        if ($settings->municipality_rule_enabled && $lat !== null && $lng !== null) {
+            return $this->municipalityDeliveryCharge($settings, $lat, $lng, $distanceKm);
+        }
+
+        if ($settings->charge_mode === 'fixed') {
+            return ['fee' => round((float) $settings->fixed_charge, 2), 'distance_km' => $distanceKm === null ? null : round($distanceKm, 2), 'mode' => 'fixed'];
+        }
+
+        $fee = (float) $settings->base_charge + (($distanceKm ?? 0) * (float) $settings->per_km_charge);
+        $fee = max((float) $settings->minimum_charge, $fee);
+
+        return ['fee' => round($fee, 2), 'distance_km' => $distanceKm === null ? null : round($distanceKm, 2), 'mode' => 'per_km'];
+    }
+
+    private function municipalityDeliveryCharge(FoodDeliverySetting $settings, float $lat, float $lng, ?float $distanceKm): array
+    {
+        $fixed = (float) ($settings->municipality_fixed_charge ?? 50);
+        $extraRate = (float) ($settings->municipality_extra_per_km_charge ?? 0);
+        if ($this->isInsideMunicipality($settings, $lat, $lng)) {
+            return [
+                'fee' => round($fixed, 2),
+                'distance_km' => $distanceKm === null ? null : round($distanceKm, 2),
+                'mode' => 'municipality_fixed',
+                'label' => 'Bhola Sadar Pourashava fixed charge',
+            ];
+        }
+
+        $outsideKm = $this->municipalityOutsideDistanceKm($settings, $lat, $lng, $distanceKm);
+        return [
+            'fee' => round($fixed + ($outsideKm * $extraRate), 2),
+            'distance_km' => $distanceKm === null ? null : round($distanceKm, 2),
+            'mode' => 'municipality_outside_per_km',
+            'label' => 'Pourashava outside extra per KM',
+        ];
+    }
+
+    private function isInsideMunicipality(FoodDeliverySetting $settings, float $lat, float $lng): bool
+    {
+        $polygon = $settings->municipality_polygon ?? [];
+        if (is_array($polygon) && count($polygon) >= 3) {
+            return $this->pointInPolygon($lat, $lng, $polygon);
+        }
+
+        if ($settings->municipality_center_lat !== null && $settings->municipality_center_lng !== null && $settings->municipality_radius_km !== null) {
+            return $this->distanceKm((float) $settings->municipality_center_lat, (float) $settings->municipality_center_lng, $lat, $lng) <= (float) $settings->municipality_radius_km;
+        }
+
+        return false;
+    }
+
+    private function municipalityOutsideDistanceKm(FoodDeliverySetting $settings, float $lat, float $lng, ?float $fallbackDistanceKm): float
+    {
+        if ($settings->municipality_center_lat !== null && $settings->municipality_center_lng !== null && $settings->municipality_radius_km !== null) {
+            $fromCenter = $this->distanceKm((float) $settings->municipality_center_lat, (float) $settings->municipality_center_lng, $lat, $lng);
+            return max(0, $fromCenter - (float) $settings->municipality_radius_km);
+        }
+
+        return max(0, (float) ($fallbackDistanceKm ?? 0));
+    }
+
+    private function pointInPolygon(float $lat, float $lng, array $polygon): bool
+    {
+        $inside = false;
+        $count = count($polygon);
+        for ($i = 0, $j = $count - 1; $i < $count; $j = $i++) {
+            $latI = (float) ($polygon[$i]['lat'] ?? 0);
+            $lngI = (float) ($polygon[$i]['lng'] ?? 0);
+            $latJ = (float) ($polygon[$j]['lat'] ?? 0);
+            $lngJ = (float) ($polygon[$j]['lng'] ?? 0);
+            $intersects = (($lngI > $lng) !== ($lngJ > $lng))
+                && ($lat < ($latJ - $latI) * ($lng - $lngI) / (($lngJ - $lngI) ?: 0.0000001) + $latI);
+            if ($intersects) {
+                $inside = ! $inside;
+            }
+        }
+
+        return $inside;
+    }
+
+    private function distanceKm(float $fromLat, float $fromLng, float $toLat, float $toLng): float
+    {
+        $earthRadius = 6371;
+        $latDelta = deg2rad($toLat - $fromLat);
+        $lngDelta = deg2rad($toLng - $fromLng);
+        $a = sin($latDelta / 2) ** 2
+            + cos(deg2rad($fromLat)) * cos(deg2rad($toLat)) * sin($lngDelta / 2) ** 2;
+
+        return $earthRadius * (2 * atan2(sqrt($a), sqrt(1 - $a)));
+    }
+
+    private function mapUrl($lat, $lng): ?string
+    {
+        if ($lat === null || $lng === null) {
+            return null;
+        }
+
+        return 'https://www.google.com/maps/search/?api=1&query=' . $lat . ',' . $lng;
+    }
+
+    private function paymentOptions(): array
+    {
+        $options = [[
+            'method' => 'cash_on_delivery',
+            'title' => 'Cash on Delivery',
+            'subtitle' => 'মেডিসিন হাতে পেয়ে টাকা দিন',
+            'number' => null,
+            'instructions' => null,
+        ]];
+
+        foreach ([
+            'manual_bkash' => ['title' => 'Manual bKash', 'config' => 'bkash_number'],
+            'manual_nagad' => ['title' => 'Manual Nagad', 'config' => 'nagad_number'],
+        ] as $method => $meta) {
+            $number = trim((string) config('services.medicine_payment.'.$meta['config'], ''));
+            if ($number === '') {
+                continue;
+            }
+            $options[] = [
+                'method' => $method,
+                'title' => $meta['title'],
+                'subtitle' => 'অর্ডার কনফার্ম করার আগে/পরে এই নম্বরে পেমেন্ট করুন',
+                'number' => $number,
+                'instructions' => config('services.medicine_payment.instructions') ?: 'Send Money করে transaction ID দিন।',
+            ];
+        }
+
+        return $options;
+    }
+
+    private function supportsPayment(string $method): bool
+    {
+        return collect($this->paymentOptions())->contains('method', $method);
+    }
+
+    private function decorateOrder(MedicineOrder $order): MedicineOrder
+    {
+        $path = $order->payment_proof_photo;
+        $order->payment_proof_photo_url = $path ? asset('storage/'.$path) : null;
+
+        return $order;
     }
 }
