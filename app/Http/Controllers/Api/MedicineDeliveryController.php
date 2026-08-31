@@ -9,6 +9,7 @@ use App\Models\MedicineCartItem;
 use App\Models\MedicineItem;
 use App\Models\MedicineOrder;
 use App\Models\MedicineOrderItem;
+use App\Models\MedicinePaymentSetting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -188,7 +189,15 @@ class MedicineDeliveryController extends Controller
 
         $itemsTotal = round((float) $cart->items->sum('total_price'), 2);
         $paymentMethod = $data['payment_method'] ?? 'cash_on_delivery';
-        abort_unless($this->supportsPayment($paymentMethod), 422, 'Selected payment method is not available.');
+        $paymentSettings = MedicinePaymentSetting::current();
+        abort_unless($this->supportsPayment($paymentMethod, $paymentSettings), 422, 'Selected payment method is not available.');
+        abort_if(
+            in_array($paymentMethod, ['manual_bkash', 'manual_nagad'], true)
+                && $paymentSettings->require_manual_payment_proof
+                && ! $request->hasFile('payment_proof_photo'),
+            422,
+            'Payment proof photo is required for this payment method.'
+        );
         $charge = $this->deliveryCharge(
             (float) $data['delivery_lat'],
             (float) $data['delivery_lng'],
@@ -286,6 +295,7 @@ class MedicineDeliveryController extends Controller
             'delivery_charge_mode' => 'fixed',
             'delivery_charge_label' => 'Checkout এ লোকেশন দিলে ডেলিভারি চার্জ আপডেট হবে',
             'payment_options' => $this->paymentOptions(),
+            'payment_notice' => MedicinePaymentSetting::current()->payment_notice,
             'grand_total' => round($itemsTotal + $deliveryFee, 2),
         ];
     }
@@ -482,37 +492,13 @@ class MedicineDeliveryController extends Controller
 
     private function paymentOptions(): array
     {
-        $options = [[
-            'method' => 'cash_on_delivery',
-            'title' => 'Cash on Delivery',
-            'subtitle' => 'মেডিসিন হাতে পেয়ে টাকা দিন',
-            'number' => null,
-            'instructions' => null,
-        ]];
-
-        foreach ([
-            'manual_bkash' => ['title' => 'Manual bKash', 'config' => 'bkash_number'],
-            'manual_nagad' => ['title' => 'Manual Nagad', 'config' => 'nagad_number'],
-        ] as $method => $meta) {
-            $number = trim((string) config('services.medicine_payment.'.$meta['config'], ''));
-            if ($number === '') {
-                continue;
-            }
-            $options[] = [
-                'method' => $method,
-                'title' => $meta['title'],
-                'subtitle' => 'অর্ডার কনফার্ম করার আগে/পরে এই নম্বরে পেমেন্ট করুন',
-                'number' => $number,
-                'instructions' => config('services.medicine_payment.instructions') ?: 'Send Money করে transaction ID দিন।',
-            ];
-        }
-
-        return $options;
+        return MedicinePaymentSetting::current()->paymentOptions();
     }
 
-    private function supportsPayment(string $method): bool
+    private function supportsPayment(string $method, ?MedicinePaymentSetting $settings = null): bool
     {
-        return collect($this->paymentOptions())->contains('method', $method);
+        $settings ??= MedicinePaymentSetting::current();
+        return collect($settings->paymentOptions())->contains('method', $method);
     }
 
     private function decorateOrder(MedicineOrder $order): MedicineOrder

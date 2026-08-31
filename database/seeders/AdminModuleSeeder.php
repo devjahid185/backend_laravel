@@ -48,6 +48,7 @@ class AdminModuleSeeder extends Seeder
             ['name' => 'SMS Settings', 'slug' => 'sms-settings', 'group_name' => 'System', 'route' => '/admin/sms-settings'],
             ['name' => 'Email Settings', 'slug' => 'email-settings', 'group_name' => 'System', 'route' => '/admin/email-settings'],
             ['name' => 'Settings', 'slug' => 'settings', 'group_name' => 'System', 'route' => '/admin/settings'],
+            ['name' => 'Medicine Payments', 'slug' => 'medicine-payment-settings', 'group_name' => 'Medicine Delivery', 'route' => '/admin/medicine-payment-settings'],
         ];
 
         foreach ($modules as $index => $module) {

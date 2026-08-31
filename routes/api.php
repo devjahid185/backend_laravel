@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\AdminEmailSettingController;
 use App\Http\Controllers\Api\AdminFoodDeliverySettingController;
 use App\Http\Controllers\Api\AdminAppVersionSettingController;
 use App\Http\Controllers\Api\AdminMapSettingController;
+use App\Http\Controllers\Api\AdminMedicinePaymentSettingController;
 use App\Http\Controllers\Api\AdminNotificationController;
 use App\Http\Controllers\Api\AdminProfileController;
 use App\Http\Controllers\Api\AdminSmsSettingController;
@@ -95,6 +96,8 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::post('/admin/email-settings/test', [AdminEmailSettingController::class, 'test']);
     Route::get('/admin/food-delivery-settings', [AdminFoodDeliverySettingController::class, 'show']);
     Route::put('/admin/food-delivery-settings', [AdminFoodDeliverySettingController::class, 'update']);
+    Route::get('/admin/medicine-payment-settings', [AdminMedicinePaymentSettingController::class, 'show']);
+    Route::put('/admin/medicine-payment-settings', [AdminMedicinePaymentSettingController::class, 'update']);
     Route::get('/admin/app-version-settings', [AdminAppVersionSettingController::class, 'show']);
     Route::put('/admin/app-version-settings', [AdminAppVersionSettingController::class, 'update']);
     Route::get('/admin/map-settings', [AdminMapSettingController::class, 'show']);
