@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 Artisan::command('inspire', function () {
@@ -113,6 +114,130 @@ Artisan::command('medicine:import-medex {path : Path to medex.db SQLite/CSV file
     $this->info('Medicine import complete.');
     return 0;
 })->purpose('Import Bangladeshi medicine data from NasirSunny50/Bangladeshi-Medicine-API medex.db');
+
+Artisan::command('medicine:import-assorted-csv {path : Path to Assorted Medicine Dataset medicine.csv} {--replace : Remove existing medicine catalog before importing}', function (string $path): int {
+    if (! is_file($path)) {
+        $this->error("Medicine CSV file not found: {$path}");
+        return 1;
+    }
+
+    $handle = fopen($path, 'r');
+    if (! $handle) {
+        $this->error("Unable to open: {$path}");
+        return 1;
+    }
+
+    $header = fgetcsv($handle);
+    $normalize = fn ($value) => strtolower(trim((string) $value));
+    $indexes = [];
+    foreach ($header ?: [] as $index => $name) {
+        $indexes[$normalize($name)] = $index;
+    }
+
+    $required = ['brand id', 'brand name', 'slug', 'dosage form', 'generic', 'strength', 'manufacturer', 'package container'];
+    foreach ($required as $column) {
+        if (! array_key_exists($column, $indexes)) {
+            fclose($handle);
+            $this->error("CSV missing required column: {$column}");
+            return 1;
+        }
+    }
+
+    $value = fn (array $row, string $column) => trim((string) ($row[$indexes[$column] ?? -1] ?? ''));
+    $extractPrice = function (string $priceText): ?float {
+        if (preg_match('/Unit Price:\s*৳\s*([0-9]+(?:\.[0-9]+)?)/u', $priceText, $match)) {
+            return round((float) $match[1], 2);
+        }
+
+        if (preg_match('/৳\s*([0-9]+(?:\.[0-9]+)?)/u', $priceText, $match)) {
+            return round((float) $match[1], 2);
+        }
+
+        return null;
+    };
+
+    if ($this->option('replace')) {
+        $this->warn('Replacing existing medicine catalog...');
+        DB::transaction(function (): void {
+            DB::table('medicine_cart_items')->delete();
+            DB::table('medicine_carts')->delete();
+            if (Schema::hasTable('medicine_order_items') && Schema::hasColumn('medicine_order_items', 'medicine_item_id')) {
+                DB::table('medicine_order_items')->update(['medicine_item_id' => null]);
+            }
+            DB::table('medicine_items')->delete();
+        });
+    }
+
+    $total = max(0, count(file($path, FILE_SKIP_EMPTY_LINES)) - 1);
+    $this->info("Importing {$total} medicines from Assorted Medicine Dataset CSV...");
+
+    $payload = [];
+    $imported = 0;
+    while (($row = fgetcsv($handle)) !== false) {
+        $sourceId = (int) $value($row, 'brand id');
+        $brandName = $value($row, 'brand name');
+        if ($sourceId <= 0 || $brandName === '') {
+            continue;
+        }
+
+        $priceText = $value($row, 'package container');
+        $payload[] = [
+            'source_id' => $sourceId,
+            'slug' => $value($row, 'slug') ?: Str::slug($brandName.'-'.$sourceId),
+            'brand_name' => $brandName,
+            'dosage_form' => $value($row, 'dosage form') ?: null,
+            'strength' => $value($row, 'strength') ?: null,
+            'generic_name' => $value($row, 'generic') ?: null,
+            'generic_id' => null,
+            'company' => $value($row, 'manufacturer') ?: null,
+            'company_id' => null,
+            'unit_price' => $extractPrice($priceText),
+            'price_text' => $priceText ?: null,
+            'pack_sizes' => $value($row, 'package size') ?: null,
+            'indications' => null,
+            'composition' => null,
+            'pharmacology' => null,
+            'dosage_and_administration' => null,
+            'interaction' => null,
+            'contraindications' => null,
+            'side_effects' => null,
+            'pregnancy_and_lactation' => null,
+            'precautions_and_warnings' => null,
+            'overdose_effects' => null,
+            'therapeutic_class' => null,
+            'storage_conditions' => null,
+            'sections' => json_encode(['source' => 'assorted-medicine-dataset-of-bangladesh']),
+            'is_available' => true,
+            'updated_at' => now(),
+            'created_at' => now(),
+        ];
+
+        if (count($payload) >= 500) {
+            DB::table('medicine_items')->upsert(
+                $payload,
+                ['source_id'],
+                array_values(array_diff(array_keys($payload[0]), ['source_id', 'created_at']))
+            );
+            $imported += count($payload);
+            $this->line("Imported {$imported}/{$total}");
+            $payload = [];
+        }
+    }
+
+    if ($payload !== []) {
+        DB::table('medicine_items')->upsert(
+            $payload,
+            ['source_id'],
+            array_values(array_diff(array_keys($payload[0]), ['source_id', 'created_at']))
+        );
+        $imported += count($payload);
+        $this->line("Imported {$imported}/{$total}");
+    }
+
+    fclose($handle);
+    $this->info('Assorted medicine import complete.');
+    return 0;
+})->purpose('Import medicine catalog with package/unit prices from Assorted Medicine Dataset of Bangladesh medicine.csv');
 
 Artisan::command('medicine:import-images {path : CSV with source_id,image_url}', function (string $path): int {
     if (! is_file($path)) {
