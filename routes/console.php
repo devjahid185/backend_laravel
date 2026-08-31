@@ -239,6 +239,88 @@ Artisan::command('medicine:import-assorted-csv {path : Path to Assorted Medicine
     return 0;
 })->purpose('Import medicine catalog with package/unit prices from Assorted Medicine Dataset of Bangladesh medicine.csv');
 
+Artisan::command('medicine:import-assorted-generics {path : Path to Assorted Medicine Dataset generic.csv}', function (string $path): int {
+    if (! is_file($path)) {
+        $this->error("Generic CSV file not found: {$path}");
+        return 1;
+    }
+
+    $handle = fopen($path, 'r');
+    if (! $handle) {
+        $this->error("Unable to open: {$path}");
+        return 1;
+    }
+
+    $header = fgetcsv($handle);
+    $normalize = fn ($value) => strtolower(trim((string) $value));
+    $indexes = [];
+    foreach ($header ?: [] as $index => $name) {
+        $indexes[$normalize($name)] = $index;
+    }
+
+    foreach (['generic id', 'generic name'] as $column) {
+        if (! array_key_exists($column, $indexes)) {
+            fclose($handle);
+            $this->error("CSV missing required column: {$column}");
+            return 1;
+        }
+    }
+
+    $value = fn (array $row, string $column) => trim((string) ($row[$indexes[$column] ?? -1] ?? ''));
+    $description = fn (array $row, string $column) => $value($row, $column) ?: null;
+    $combine = function (?string ...$parts): ?string {
+        $filtered = array_values(array_filter($parts, fn ($part) => trim((string) $part) !== ''));
+        return $filtered === [] ? null : implode("\n\n", $filtered);
+    };
+
+    $updatedGenerics = 0;
+    while (($row = fgetcsv($handle)) !== false) {
+        $genericName = $value($row, 'generic name');
+        if ($genericName === '') {
+            continue;
+        }
+
+        $sections = [
+            'source' => 'assorted-medicine-dataset-of-bangladesh',
+            'generic_slug' => $description($row, 'slug'),
+            'monograph_link' => $description($row, 'monograph link'),
+        ];
+
+        $updated = DB::table('medicine_items')
+            ->where('generic_name', $genericName)
+            ->update([
+                'generic_id' => (int) $value($row, 'generic id') ?: null,
+                'indications' => $description($row, 'indication description') ?: $description($row, 'indication'),
+                'pharmacology' => $description($row, 'pharmacology description'),
+                'dosage_and_administration' => $combine(
+                    $description($row, 'dosage description'),
+                    $description($row, 'administration description'),
+                    $description($row, 'pediatric usage description'),
+                    $description($row, 'duration of treatment description'),
+                    $description($row, 'reconstitution description'),
+                ),
+                'interaction' => $description($row, 'interaction description'),
+                'contraindications' => $description($row, 'contraindications description'),
+                'side_effects' => $description($row, 'side effects description'),
+                'pregnancy_and_lactation' => $description($row, 'pregnancy and lactation description'),
+                'precautions_and_warnings' => $description($row, 'precautions description'),
+                'overdose_effects' => $description($row, 'overdose effects description'),
+                'therapeutic_class' => $description($row, 'drug class'),
+                'storage_conditions' => $description($row, 'storage conditions description'),
+                'sections' => json_encode($sections),
+                'updated_at' => now(),
+            ]);
+
+        if ($updated > 0) {
+            $updatedGenerics++;
+        }
+    }
+
+    fclose($handle);
+    $this->info("Enriched medicines from {$updatedGenerics} generic rows.");
+    return 0;
+})->purpose('Enrich imported medicines with generic monograph details from Assorted Medicine Dataset generic.csv');
+
 Artisan::command('medicine:import-images {path : CSV with source_id,image_url}', function (string $path): int {
     if (! is_file($path)) {
         $this->error("Image CSV file not found: {$path}");
