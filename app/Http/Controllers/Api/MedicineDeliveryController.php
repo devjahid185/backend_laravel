@@ -270,6 +270,32 @@ class MedicineDeliveryController extends Controller
         ));
     }
 
+    public function updateOrderPaymentProof(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate([
+            'manual_transaction_id' => ['required', 'string', 'max:120'],
+            'payment_proof_photo' => ['nullable', 'file', 'image', 'max:4096'],
+        ]);
+
+        $order = MedicineOrder::query()
+            ->with('items')
+            ->where('user_id', $request->user()->id)
+            ->whereIn('payment_method', ['manual_bkash', 'manual_nagad'])
+            ->findOrFail($id);
+        abort_if($order->payment_status === 'paid', 422, 'Payment is already marked as paid.');
+
+        $order->manual_transaction_id = $data['manual_transaction_id'];
+        if ($request->hasFile('payment_proof_photo')) {
+            $order->payment_proof_photo = $request->file('payment_proof_photo')->store('medicine/payment-proofs', 'public');
+        }
+        $order->save();
+
+        return response()->json([
+            'message' => 'Payment information submitted for verification.',
+            'order' => $this->decorateOrder($order),
+        ]);
+    }
+
     private function cartFor(Request $request): MedicineCart
     {
         return MedicineCart::query()->firstOrCreate(['user_id' => $request->user()->id]);
@@ -505,6 +531,8 @@ class MedicineDeliveryController extends Controller
     {
         $path = $order->payment_proof_photo;
         $order->payment_proof_photo_url = $path ? asset('storage/'.$path) : null;
+        $order->payment_options = $this->paymentOptions();
+        $order->payment_notice = MedicinePaymentSetting::current()->payment_notice;
 
         return $order;
     }

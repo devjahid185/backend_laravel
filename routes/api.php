@@ -368,6 +368,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
         Route::delete('/cart/items/{id}', [MedicineDeliveryController::class, 'removeCartItem'])->whereNumber('id');
         Route::post('/checkout', [MedicineDeliveryController::class, 'checkout']);
         Route::get('/orders', [MedicineDeliveryController::class, 'orders']);
+        Route::post('/orders/{id}/payment-proof', [MedicineDeliveryController::class, 'updateOrderPaymentProof'])->whereNumber('id');
         Route::get('/orders/{id}', [MedicineDeliveryController::class, 'order'])->whereNumber('id');
     });
 
