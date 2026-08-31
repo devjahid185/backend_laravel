@@ -305,26 +305,46 @@ class MedicineDeliveryController extends Controller
             'generic_name' => $item->generic_name,
             'company' => $item->company,
             'unit_price' => $item->unit_price === null ? null : (float) $item->unit_price,
-            'price_text' => $item->price_text,
-            'pack_sizes' => $item->pack_sizes,
+            'price_text' => $this->plainMedicineText($item->price_text),
+            'pack_sizes' => $this->plainMedicineText($item->pack_sizes),
             'image_url' => $item->image_url,
             'is_promoted' => (bool) $item->is_promoted,
             'prescription_required' => (bool) $item->prescription_required,
-            'therapeutic_class' => $item->therapeutic_class,
+            'therapeutic_class' => $this->plainMedicineText($item->therapeutic_class),
         ];
 
         if ($details) {
             $data += [
-                'indications' => $item->indications,
-                'composition' => $item->composition,
-                'dosage_and_administration' => $item->dosage_and_administration,
-                'side_effects' => $item->side_effects,
-                'precautions_and_warnings' => $item->precautions_and_warnings,
-                'storage_conditions' => $item->storage_conditions,
+                'indications' => $this->plainMedicineText($item->indications),
+                'composition' => $this->plainMedicineText($item->composition),
+                'dosage_and_administration' => $this->plainMedicineText($item->dosage_and_administration),
+                'side_effects' => $this->plainMedicineText($item->side_effects),
+                'precautions_and_warnings' => $this->plainMedicineText($item->precautions_and_warnings),
+                'storage_conditions' => $this->plainMedicineText($item->storage_conditions),
             ];
         }
 
         return $data;
+    }
+
+    private function plainMedicineText(?string $value): ?string
+    {
+        if ($value === null || trim($value) === '') {
+            return null;
+        }
+
+        $text = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = preg_replace('/<\s*br\s*\/?>/i', "\n", $text);
+        $text = preg_replace('/<\s*\/\s*(p|div|ul|ol|h[1-6])\s*>/i', "\n", $text);
+        $text = preg_replace('/<\s*li\b[^>]*>/i', "\n• ", $text);
+        $text = preg_replace('/<\s*\/\s*li\s*>/i', "\n", $text);
+        $text = strip_tags($text);
+        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = preg_replace('/[ \t\x{00A0}]+/u', ' ', $text);
+        $text = preg_replace('/\n\s*\n\s*\n+/u', "\n\n", $text);
+        $text = trim($text);
+
+        return $text === '' ? null : $text;
     }
 
     private function deliveryFee(): float
