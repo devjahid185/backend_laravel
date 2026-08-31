@@ -165,7 +165,12 @@ class RiderController extends Controller
             'availability_status' => ['required', 'in:offline,online,busy'],
         ]);
         $rider->update($data);
-        return response()->json(['message' => 'স্ট্যাটাস আপডেট হয়েছে।', 'rider' => $rider->fresh()]);
+        $rider = $rider->fresh();
+        if ($rider->availability_status === 'online') {
+            $this->dispatchNearbyPendingOrders($rider);
+        }
+
+        return response()->json(['message' => 'স্ট্যাটাস আপডেট হয়েছে।', 'rider' => $rider]);
     }
 
     public function updateLocation(Request $request): JsonResponse

@@ -561,9 +561,6 @@ class MedicineDeliveryController extends Controller
             ->where('availability_status', 'online')
             ->whereNotNull('last_lat')
             ->whereNotNull('last_lng')
-            ->where(function ($query): void {
-                $query->whereNull('last_location_at')->orWhere('last_location_at', '>=', now()->subMinutes(30));
-            })
             ->get()
             ->map(function (Rider $rider) use ($originLat, $originLng): Rider {
                 $rider->dispatch_distance_km = $this->distanceKm($originLat, $originLng, (float) $rider->last_lat, (float) $rider->last_lng);
@@ -593,6 +590,12 @@ class MedicineDeliveryController extends Controller
                 ]
             );
         }
+
+        Log::info('Medicine rider dispatch requests created', [
+            'order_id' => $order->id,
+            'rider_count' => $riders->count(),
+            'radius_km' => $radiusKm,
+        ]);
 
         $this->notifyRidersForOrder($order, $riders->pluck('id')->all());
     }
@@ -626,11 +629,15 @@ class MedicineDeliveryController extends Controller
 
         $tokens = DeviceToken::query()->whereIn('user_id', $userIds)->pluck('token')->all();
         if (! $tokens) {
+            Log::info('Medicine rider dispatch notification skipped: no device token', [
+                'order_id' => $order->id,
+                'user_ids' => $userIds,
+            ]);
             return;
         }
 
         try {
-            app(FcmService::class)->sendToTokens($tokens, [
+            $results = app(FcmService::class)->sendToTokens($tokens, [
                 'data' => [
                     'type' => 'rider_order_request',
                     'role' => 'rider',
@@ -643,6 +650,12 @@ class MedicineDeliveryController extends Controller
                     'screen' => 'rider_dashboard',
                 ],
                 'notification' => ['title' => $title, 'body' => $message],
+            ]);
+            Log::info('Medicine rider dispatch notification sent', [
+                'order_id' => $order->id,
+                'user_count' => count($userIds),
+                'token_count' => count($tokens),
+                'results' => $results,
             ]);
         } catch (\Throwable $e) {
             Log::error('Medicine rider dispatch notification failed', ['order_id' => $order->id, 'error' => $e->getMessage()]);
