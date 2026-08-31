@@ -64,8 +64,18 @@ def main() -> int:
             time.sleep(delay)
         try:
             headers = [
-                "Accept-Language: en-US,en;q=0.9,bn;q=0.8",
-                "Referer: https://medex.com.bd/brands",
+                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Language: en-US,en;q=0.9,nl;q=0.8",
+                "Cache-Control: max-age=0",
+                "Referer: https://medex.com.bd/captcha-challenge",
+                'sec-ch-ua: "Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"',
+                "sec-ch-ua-mobile: ?0",
+                'sec-ch-ua-platform: "macOS"',
+                "sec-fetch-dest: document",
+                "sec-fetch-mode: navigate",
+                "sec-fetch-site: same-origin",
+                "sec-fetch-user: ?1",
+                "upgrade-insecure-requests: 1",
             ]
             cookie = os.environ.get("MEDEX_COOKIE", "").strip()
             if cookie:
@@ -78,7 +88,7 @@ def main() -> int:
                     "--max-time",
                     "25",
                     "-A",
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
                     *sum((["-H", h] for h in headers), []),
                     url,
                 ],
