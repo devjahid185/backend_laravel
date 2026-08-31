@@ -130,7 +130,13 @@ class AdminResourceController extends Controller
             $this->applyFoodOrderFilters($query, $request);
         }
         if ($resource === 'medicine-orders') {
-            $query->with('items');
+            $query->with([
+                'items',
+                'rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
+            ])->withCount([
+                'riderRequests as pending_rider_requests_count' => fn ($q) => $q->where('status', 'pending'),
+                'riderRequests as total_rider_requests_count',
+            ]);
         }
         $search = trim((string) $request->query('search', ''));
         if ($search !== '') {
@@ -142,6 +148,9 @@ class AdminResourceController extends Controller
         $paginator = $query->latest()->paginate($perPage);
         if ($resource === 'food-orders') {
             $paginator->setCollection($paginator->getCollection()->map(fn (FoodOrder $order) => $this->decorateFoodOrder($order)));
+        }
+        if ($resource === 'medicine-orders') {
+            $paginator->setCollection($paginator->getCollection()->map(fn (MedicineOrder $order) => $this->decorateMedicineOrder($order)));
         }
 
         $columns = $this->columnsFor($model);
@@ -183,13 +192,24 @@ class AdminResourceController extends Controller
             $query->with(['documents', 'user:id,name,phone,email']);
         }
         if ($resource === 'medicine-orders') {
-            $query->with('items');
+            $query->with([
+                'items',
+                'rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
+                'riderRequests.rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
+            ]);
+            $query->withCount([
+                'riderRequests as pending_rider_requests_count' => fn ($q) => $q->where('status', 'pending'),
+                'riderRequests as total_rider_requests_count',
+            ]);
         }
 
         $record = $query->findOrFail($id);
 
         if ($resource === 'food-orders') {
             $record = $this->decorateFoodOrder($record);
+        }
+        if ($resource === 'medicine-orders') {
+            $record = $this->decorateMedicineOrder($record);
         }
 
         return response()->json($record);
@@ -332,6 +352,7 @@ class AdminResourceController extends Controller
 
     private function decorateFoodOrder(FoodOrder $order): FoodOrder
     {
+        $order->service_type = 'food';
         $order->rider_assignment_status = $order->rider_id ? 'accepted' : 'not_accepted';
         $order->rider_assignment_label = $order->rider_id
             ? 'Rider accepted'
@@ -341,6 +362,26 @@ class AdminResourceController extends Controller
         $order->route_distance_km = $this->foodOrderDistanceKm($order);
         $order->payment_proof_photo_url = $order->payment_proof_photo
             ? asset('storage/'.$order->payment_proof_photo)
+            : null;
+
+        return $order;
+    }
+
+    private function decorateMedicineOrder(MedicineOrder $order): MedicineOrder
+    {
+        $order->service_type = 'medicine';
+        $order->rider_assignment_status = $order->rider_id ? 'accepted' : 'not_accepted';
+        $order->rider_assignment_label = $order->rider_id
+            ? 'Rider accepted'
+            : (((int) ($order->pending_rider_requests_count ?? 0)) > 0 ? 'Waiting for rider' : 'No rider accepted yet');
+        $order->accepted_rider_name = $order->rider?->name;
+        $order->accepted_rider_phone = $order->rider?->phone;
+        $order->route_distance_km = $order->delivery_distance_km !== null ? round((float) $order->delivery_distance_km, 2) : null;
+        $order->payment_proof_photo_url = $order->payment_proof_photo
+            ? asset('storage/'.$order->payment_proof_photo)
+            : null;
+        $order->delivery_proof_photo_url = $order->delivery_proof_photo
+            ? asset('storage/'.$order->delivery_proof_photo)
             : null;
 
         return $order;

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AppNotification;
 use App\Models\DeviceToken;
 use App\Models\FoodOrder;
+use App\Models\MedicineOrder;
 use App\Models\Rider;
 use App\Models\RiderDocument;
 use App\Models\RiderLocation;
@@ -118,19 +119,33 @@ class RiderController extends Controller
     public function dashboard(Request $request): JsonResponse
     {
         $rider = $this->riderFor($request);
-        $todayOrders = FoodOrder::query()->where('rider_id', $rider->id)->whereDate('created_at', today());
-        $activeOrders = FoodOrder::query()
+        $todayFoodOrders = FoodOrder::query()->where('rider_id', $rider->id)->whereDate('created_at', today());
+        $todayMedicineOrders = MedicineOrder::query()->where('rider_id', $rider->id)->whereDate('created_at', today());
+        $activeFoodOrders = FoodOrder::query()
             ->with('restaurant:id,name,phone,address,lat,lng', 'items')
             ->where('rider_id', $rider->id)
             ->whereIn('status', ['accepted', 'preparing', 'picked_up', 'on_the_way'])
             ->latest()
             ->get();
+        $activeMedicineOrders = MedicineOrder::query()
+            ->with('items')
+            ->where('rider_id', $rider->id)
+            ->whereIn('status', ['accepted', 'preparing', 'picked_up', 'on_the_way'])
+            ->latest()
+            ->get();
+        $activeOrders = $activeFoodOrders
+            ->map(fn (FoodOrder $order) => $this->decorateRiderOrder($order, 'food'))
+            ->merge($activeMedicineOrders->map(fn (MedicineOrder $order) => $this->decorateRiderOrder($order, 'medicine')))
+            ->sortByDesc('created_at')
+            ->values();
 
         return response()->json([
             'rider' => $rider,
             'stats' => [
-                'today_deliveries' => (clone $todayOrders)->where('status', 'delivered')->count(),
-                'today_earning' => (float) (clone $todayOrders)->where('status', 'delivered')->sum('rider_earning'),
+                'today_deliveries' => (clone $todayFoodOrders)->where('status', 'delivered')->count()
+                    + (clone $todayMedicineOrders)->where('status', 'delivered')->count(),
+                'today_earning' => (float) (clone $todayFoodOrders)->where('status', 'delivered')->sum('rider_earning')
+                    + (float) (clone $todayMedicineOrders)->where('status', 'delivered')->sum('rider_earning'),
                 'pending_payout' => (float) $rider->pending_payout,
                 'wallet_balance' => (float) $rider->wallet_balance,
                 'cash_in_hand' => (float) $rider->cash_in_hand,
@@ -175,12 +190,24 @@ class RiderController extends Controller
     public function orders(Request $request): JsonResponse
     {
         $rider = $this->riderFor($request);
-        $orders = FoodOrder::query()
+        $foodOrders = FoodOrder::query()
             ->with('restaurant:id,name,phone,address,lat,lng', 'items')
             ->where('rider_id', $rider->id)
             ->latest()
-            ->paginate((int) min(max((int) $request->query('per_page', 30), 1), 100));
-        return response()->json($orders);
+            ->limit((int) min(max((int) $request->query('per_page', 30), 1), 100))
+            ->get()
+            ->map(fn (FoodOrder $order) => $this->decorateRiderOrder($order, 'food'));
+        $medicineOrders = MedicineOrder::query()
+            ->with('items')
+            ->where('rider_id', $rider->id)
+            ->latest()
+            ->limit((int) min(max((int) $request->query('per_page', 30), 1), 100))
+            ->get()
+            ->map(fn (MedicineOrder $order) => $this->decorateRiderOrder($order, 'medicine'));
+
+        return response()->json([
+            'data' => $foodOrders->merge($medicineOrders)->sortByDesc('created_at')->values(),
+        ]);
     }
 
     public function acceptOrder(Request $request, int $id): JsonResponse
@@ -188,36 +215,37 @@ class RiderController extends Controller
         $rider = $this->riderFor($request);
         abort_unless($rider->kyc_status === 'approved' && $rider->account_status === 'active', 422, 'অনুমোদিত রাইডার ছাড়া অর্ডার গ্রহণ করা যাবে না।');
 
-        $order = DB::transaction(function () use ($id, $rider): FoodOrder {
-            $order = FoodOrder::query()->with('restaurant')->where('id', $id)->lockForUpdate()->firstOrFail();
-            $requestRow = RiderOrderRequest::query()
-                ->where('food_order_id', $order->id)
-                ->where('rider_id', $rider->id)
-                ->lockForUpdate()
-                ->firstOrFail();
+        $order = DB::transaction(function () use ($request, $id, $rider) {
+            [$order, $requestRow, $serviceType] = $this->pendingOrderRequestFor($request, $id, $rider, lock: true);
 
             abort_unless($requestRow->status === 'pending', 422, 'এই ডেলিভারি রিকোয়েস্ট আর চালু নেই।');
             abort_unless($requestRow->expires_at === null || $requestRow->expires_at->isFuture(), 422, 'এই ডেলিভারি রিকোয়েস্টের সময় শেষ।');
             abort_unless($order->rider_id === null, 409, 'অন্য রাইডার ইতিমধ্যে অর্ডারটি নিয়েছে।');
-            abort_unless(in_array($order->status, ['accepted', 'preparing'], true), 422, 'এই অর্ডার গ্রহণ করা যাবে না।');
+            abort_unless(in_array($order->status, ['pending', 'accepted', 'preparing'], true), 422, 'এই অর্ডার গ্রহণ করা যাবে না।');
 
             $earning = $this->calculateEarning($rider, $order);
-            $order->update([
+            $payload = [
                 'rider_id' => $rider->id,
                 'delivery_person_name' => $rider->name,
                 'delivery_person_phone' => $rider->phone,
                 'rider_assigned_at' => now(),
                 'rider_earning' => $earning,
-            ]);
+            ];
+            if ($serviceType === 'medicine' && $order->status === 'pending') {
+                $payload['status'] = 'accepted';
+                $payload['accepted_at'] = now();
+            }
+            $order->update($payload);
             $requestRow->update(['status' => 'accepted', 'responded_at' => now()]);
             RiderOrderRequest::query()
-                ->where('food_order_id', $order->id)
+                ->where('rider_id', $rider->id)
+                ->where($serviceType === 'medicine' ? 'medicine_order_id' : 'food_order_id', $order->id)
                 ->where('id', '!=', $requestRow->id)
                 ->where('status', 'pending')
                 ->update(['status' => 'expired', 'responded_at' => now()]);
             $rider->update(['availability_status' => 'busy']);
 
-            return $order->fresh(['restaurant:id,name,phone,address,lat,lng', 'items']);
+            return $this->decorateRiderOrder($this->freshOrderForService($order, $serviceType), $serviceType);
         });
 
         return response()->json(['message' => 'অর্ডার গ্রহণ করা হয়েছে।', 'order' => $order]);
@@ -227,11 +255,8 @@ class RiderController extends Controller
     {
         $rider = $this->riderFor($request);
         $data = $request->validate(['reason' => ['nullable', 'string', 'max:160']]);
-        RiderOrderRequest::query()
-            ->where('food_order_id', $id)
-            ->where('rider_id', $rider->id)
-            ->where('status', 'pending')
-            ->update([
+        [$order, $requestRow, $serviceType] = $this->pendingOrderRequestFor($request, $id, $rider);
+        $requestRow->update([
                 'status' => 'rejected',
                 'responded_at' => now(),
                 'reject_reason' => $data['reason'] ?? null,
@@ -248,7 +273,7 @@ class RiderController extends Controller
             'proof_photo' => ['nullable', 'file', 'image', 'max:4096'],
             'cash_collected' => ['nullable', 'numeric', 'min:0'],
         ]);
-        $order = FoodOrder::query()->where('rider_id', $rider->id)->findOrFail($id);
+        [$order, $serviceType] = $this->assignedOrderFor($request, $id, $rider);
         abort_unless(in_array($order->status, ['accepted', 'preparing', 'picked_up', 'on_the_way'], true), 422, 'স্ট্যাটাস আপডেট করা যাবে না।');
 
         if ($data['status'] === 'delivered' && $order->delivery_otp && ($data['delivery_otp'] ?? '') !== $order->delivery_otp) {
@@ -272,7 +297,10 @@ class RiderController extends Controller
             $this->recordDeliveryEarning($rider->fresh(), $order->fresh());
         }
 
-        return response()->json(['message' => 'অর্ডার স্ট্যাটাস আপডেট হয়েছে।', 'order' => $order->fresh()]);
+        return response()->json([
+            'message' => 'অর্ডার স্ট্যাটাস আপডেট হয়েছে।',
+            'order' => $this->decorateRiderOrder($this->freshOrderForService($order, $serviceType), $serviceType),
+        ]);
     }
 
     public function wallet(Request $request): JsonResponse
@@ -339,7 +367,7 @@ class RiderController extends Controller
         if ($rider->account_status !== 'active' || $rider->kyc_status !== 'approved') {
             return [];
         }
-        return FoodOrder::query()
+        $foodOrders = FoodOrder::query()
             ->with('restaurant:id,name,phone,address,lat,lng', 'items')
             ->whereIn('id', RiderOrderRequest::query()
                 ->select('food_order_id')
@@ -352,10 +380,28 @@ class RiderController extends Controller
             ->whereIn('status', ['accepted', 'preparing'])
             ->latest()
             ->limit(20)
-            ->get();
+            ->get()
+            ->map(fn (FoodOrder $order) => $this->decorateRiderOrder($order, 'food'));
+        $medicineOrders = MedicineOrder::query()
+            ->with('items')
+            ->whereIn('id', RiderOrderRequest::query()
+                ->select('medicine_order_id')
+                ->where('rider_id', $rider->id)
+                ->where('status', 'pending')
+                ->where(function ($query): void {
+                    $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
+                }))
+            ->whereNull('rider_id')
+            ->whereIn('status', ['pending', 'accepted', 'preparing'])
+            ->latest()
+            ->limit(20)
+            ->get()
+            ->map(fn (MedicineOrder $order) => $this->decorateRiderOrder($order, 'medicine'));
+
+        return $foodOrders->merge($medicineOrders)->sortByDesc('created_at')->values();
     }
 
-    private function recordDeliveryEarning(Rider $rider, FoodOrder $order): void
+    private function recordDeliveryEarning(Rider $rider, FoodOrder|MedicineOrder $order): void
     {
         DB::transaction(function () use ($rider, $order): void {
             $earning = (float) ($order->rider_earning ?: $this->calculateEarning($rider, $order));
@@ -368,7 +414,8 @@ class RiderController extends Controller
             $order->update(['rider_earning' => $earning]);
             RiderWalletEntry::query()->create([
                 'rider_id' => $rider->id,
-                'food_order_id' => $order->id,
+                'food_order_id' => $order instanceof FoodOrder ? $order->id : null,
+                'medicine_order_id' => $order instanceof MedicineOrder ? $order->id : null,
                 'type' => 'earning',
                 'amount' => $earning,
                 'balance_after' => $rider->wallet_balance,
@@ -378,7 +425,8 @@ class RiderController extends Controller
             if ($cash > 0) {
                 RiderWalletEntry::query()->create([
                     'rider_id' => $rider->id,
-                    'food_order_id' => $order->id,
+                    'food_order_id' => $order instanceof FoodOrder ? $order->id : null,
+                    'medicine_order_id' => $order instanceof MedicineOrder ? $order->id : null,
                     'type' => 'cash_collection',
                     'amount' => $cash,
                     'balance_after' => $rider->wallet_balance,
@@ -389,13 +437,87 @@ class RiderController extends Controller
         });
     }
 
-    private function calculateEarning(Rider $rider, FoodOrder $order): float
+    private function calculateEarning(Rider $rider, FoodOrder|MedicineOrder $order): float
     {
         return match ($rider->commission_type) {
             'percentage' => round(((float) $order->delivery_fee) * ((float) $rider->commission_value / 100), 2),
             'zone_based' => round(max((float) $rider->commission_value, (float) $order->delivery_fee * 0.65), 2),
             default => round((float) ($rider->commission_value ?: $order->delivery_fee), 2),
         };
+    }
+
+    private function pendingOrderRequestFor(Request $request, int $id, Rider $rider, bool $lock = false): array
+    {
+        $serviceType = $request->input('service_type');
+        $requestQuery = RiderOrderRequest::query()
+            ->where('rider_id', $rider->id)
+            ->where('status', 'pending');
+        if ($lock) {
+            $requestQuery->lockForUpdate();
+        }
+        if ($serviceType === 'medicine') {
+            $requestQuery->where('medicine_order_id', $id);
+        } elseif ($serviceType === 'food') {
+            $requestQuery->where('food_order_id', $id);
+        } else {
+            $requestQuery->where(function ($query) use ($id): void {
+                $query->where('food_order_id', $id)->orWhere('medicine_order_id', $id);
+            });
+        }
+        $requestRow = $requestQuery->firstOrFail();
+        $serviceType = $requestRow->medicine_order_id ? 'medicine' : 'food';
+        $orderQuery = $serviceType === 'medicine'
+            ? MedicineOrder::query()->with('items')->where('id', $requestRow->medicine_order_id)
+            : FoodOrder::query()->with('restaurant:id,name,phone,address,lat,lng', 'items')->where('id', $requestRow->food_order_id);
+        if ($lock) {
+            $orderQuery->lockForUpdate();
+        }
+
+        return [$orderQuery->firstOrFail(), $requestRow, $serviceType];
+    }
+
+    private function assignedOrderFor(Request $request, int $id, Rider $rider): array
+    {
+        $serviceType = $request->input('service_type');
+        if ($serviceType === 'medicine') {
+            return [MedicineOrder::query()->with('items')->where('rider_id', $rider->id)->findOrFail($id), 'medicine'];
+        }
+        if ($serviceType === 'food') {
+            return [FoodOrder::query()->with('restaurant:id,name,phone,address,lat,lng', 'items')->where('rider_id', $rider->id)->findOrFail($id), 'food'];
+        }
+        $food = FoodOrder::query()->with('restaurant:id,name,phone,address,lat,lng', 'items')->where('rider_id', $rider->id)->find($id);
+        if ($food) {
+            return [$food, 'food'];
+        }
+        return [MedicineOrder::query()->with('items')->where('rider_id', $rider->id)->findOrFail($id), 'medicine'];
+    }
+
+    private function freshOrderForService(FoodOrder|MedicineOrder $order, string $serviceType): FoodOrder|MedicineOrder
+    {
+        return $serviceType === 'medicine'
+            ? $order->fresh('items')
+            : $order->fresh(['restaurant:id,name,phone,address,lat,lng', 'items']);
+    }
+
+    private function decorateRiderOrder(FoodOrder|MedicineOrder $order, string $serviceType): array
+    {
+        $data = $order->toArray();
+        $data['service_type'] = $serviceType;
+        if ($serviceType === 'medicine') {
+            $data['restaurant'] = [
+                'name' => 'Medicine Store',
+                'phone' => config('app.name'),
+                'address' => 'Medicine pickup point',
+                'lat' => null,
+                'lng' => null,
+            ];
+            $data['items'] = collect($data['items'] ?? [])->map(function (array $item): array {
+                $item['name'] = $item['brand_name'] ?? 'Medicine';
+                return $item;
+            })->values()->all();
+        }
+
+        return $data;
     }
 
     private function dispatchNearbyPendingOrders(Rider $rider): void
@@ -454,6 +576,33 @@ class RiderController extends Controller
                 $this->notifyRiderAboutOrder($rider, $order);
             }
         }
+
+        $medicineOrders = MedicineOrder::query()
+            ->whereNull('rider_id')
+            ->whereIn('status', ['pending', 'accepted', 'preparing'])
+            ->latest()
+            ->limit(50)
+            ->get();
+
+        foreach ($medicineOrders as $order) {
+            $request = RiderOrderRequest::query()->updateOrCreate(
+                ['medicine_order_id' => $order->id, 'rider_id' => $rider->id],
+                [
+                    'food_order_id' => null,
+                    'distance_km' => null,
+                    'restaurant_lat' => null,
+                    'restaurant_lng' => null,
+                    'status' => 'pending',
+                    'notified_at' => now(),
+                    'expires_at' => now()->addMinutes(15),
+                    'reject_reason' => null,
+                ]
+            );
+
+            if ($request->wasRecentlyCreated || $request->wasChanged(['status', 'expires_at'])) {
+                $this->notifyRiderAboutMedicineOrder($rider, $order);
+            }
+        }
     }
 
     private function notifyRiderAboutOrder(Rider $rider, FoodOrder $order): void
@@ -490,6 +639,46 @@ class RiderController extends Controller
             ]);
         } catch (\Throwable $e) {
             Log::error('Rider location dispatch notification failed', [
+                'order_id' => $order->id,
+                'rider_id' => $rider->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function notifyRiderAboutMedicineOrder(Rider $rider, MedicineOrder $order): void
+    {
+        $title = 'নতুন মেডিসিন ডেলিভারি';
+        $message = "{$order->order_no} মেডিসিন অর্ডার ডেলিভারি করতে হবে।";
+        $data = [
+            'type' => 'rider_order_request',
+            'role' => 'rider',
+            'service_type' => 'medicine',
+            'event' => 'new_delivery_request',
+            'order_id' => $order->id,
+            'order_no' => $order->order_no,
+            'screen' => 'rider_dashboard',
+        ];
+
+        AppNotification::query()->create([
+            'user_id' => $rider->user_id,
+            'title' => $title,
+            'message' => $message,
+            'data' => $data,
+        ]);
+
+        $tokens = DeviceToken::query()->where('user_id', $rider->user_id)->pluck('token')->all();
+        if (! $tokens) {
+            return;
+        }
+
+        try {
+            app(FcmService::class)->sendToTokens($tokens, [
+                'data' => $data + ['title' => $title, 'message' => $message],
+                'notification' => ['title' => $title, 'body' => $message],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Medicine rider location dispatch notification failed', [
                 'order_id' => $order->id,
                 'rider_id' => $rider->id,
                 'error' => $e->getMessage(),

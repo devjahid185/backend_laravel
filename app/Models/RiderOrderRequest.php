@@ -22,6 +22,16 @@ class RiderOrderRequest extends Model
         return $this->belongsTo(FoodOrder::class, 'food_order_id');
     }
 
+    public function foodOrder()
+    {
+        return $this->belongsTo(FoodOrder::class, 'food_order_id');
+    }
+
+    public function medicineOrder()
+    {
+        return $this->belongsTo(MedicineOrder::class, 'medicine_order_id');
+    }
+
     public function rider()
     {
         return $this->belongsTo(Rider::class);

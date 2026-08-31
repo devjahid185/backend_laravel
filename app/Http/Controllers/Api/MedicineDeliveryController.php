@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AppNotification;
+use App\Models\DeviceToken;
 use App\Models\FoodDeliverySetting;
 use App\Models\MedicineCart;
 use App\Models\MedicineCartItem;
@@ -10,9 +12,13 @@ use App\Models\MedicineItem;
 use App\Models\MedicineOrder;
 use App\Models\MedicineOrderItem;
 use App\Models\MedicinePaymentSetting;
+use App\Models\Rider;
+use App\Models\RiderOrderRequest;
+use App\Services\FcmService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class MedicineDeliveryController extends Controller
@@ -252,6 +258,8 @@ class MedicineDeliveryController extends Controller
             $cart->items()->delete();
             return $this->decorateOrder($order->load('items'));
         });
+
+        $this->dispatchOrderToNearbyRiders($order);
 
         return response()->json(['message' => 'Order placed', 'order' => $order], 201);
     }
@@ -527,10 +535,128 @@ class MedicineDeliveryController extends Controller
         return collect($settings->paymentOptions())->contains('method', $method);
     }
 
+    private function dispatchOrderToNearbyRiders(MedicineOrder $order): void
+    {
+        if ($order->rider_id) {
+            return;
+        }
+
+        $settings = FoodDeliverySetting::current();
+        $originLat = $settings->store_lat !== null
+            ? (float) $settings->store_lat
+            : ($settings->municipality_center_lat !== null ? (float) $settings->municipality_center_lat : null);
+        $originLng = $settings->store_lng !== null
+            ? (float) $settings->store_lng
+            : ($settings->municipality_center_lng !== null ? (float) $settings->municipality_center_lng : null);
+        if ($originLat === null || $originLng === null) {
+            Log::info('Medicine rider dispatch skipped: pickup origin missing', ['order_id' => $order->id]);
+            return;
+        }
+
+        $radiusKm = 20.0;
+        $riders = Rider::query()
+            ->where('kyc_status', 'approved')
+            ->where('account_status', 'active')
+            ->where('agreement_accepted', true)
+            ->where('availability_status', 'online')
+            ->whereNotNull('last_lat')
+            ->whereNotNull('last_lng')
+            ->where(function ($query): void {
+                $query->whereNull('last_location_at')->orWhere('last_location_at', '>=', now()->subMinutes(30));
+            })
+            ->get()
+            ->map(function (Rider $rider) use ($originLat, $originLng): Rider {
+                $rider->dispatch_distance_km = $this->distanceKm($originLat, $originLng, (float) $rider->last_lat, (float) $rider->last_lng);
+                return $rider;
+            })
+            ->filter(fn (Rider $rider) => $rider->dispatch_distance_km <= $radiusKm)
+            ->sortBy('dispatch_distance_km')
+            ->values();
+
+        if ($riders->isEmpty()) {
+            Log::info('Medicine rider dispatch skipped: no nearby online riders', ['order_id' => $order->id]);
+            return;
+        }
+
+        foreach ($riders as $rider) {
+            RiderOrderRequest::query()->updateOrCreate(
+                ['medicine_order_id' => $order->id, 'rider_id' => $rider->id],
+                [
+                    'food_order_id' => null,
+                    'distance_km' => round((float) $rider->dispatch_distance_km, 2),
+                    'restaurant_lat' => $originLat,
+                    'restaurant_lng' => $originLng,
+                    'status' => 'pending',
+                    'notified_at' => now(),
+                    'expires_at' => now()->addMinutes(15),
+                    'reject_reason' => null,
+                ]
+            );
+        }
+
+        $this->notifyRidersForOrder($order, $riders->pluck('id')->all());
+    }
+
+    private function notifyRidersForOrder(MedicineOrder $order, array $riderIds): void
+    {
+        $userIds = Rider::query()->whereIn('id', $riderIds)->pluck('user_id')->all();
+        if (! $userIds) {
+            return;
+        }
+
+        $title = 'নতুন মেডিসিন ডেলিভারি';
+        $message = "{$order->order_no} মেডিসিন অর্ডার ডেলিভারি করতে হবে।";
+
+        foreach ($userIds as $userId) {
+            AppNotification::query()->create([
+                'user_id' => $userId,
+                'title' => $title,
+                'message' => $message,
+                'data' => [
+                    'type' => 'rider_order_request',
+                    'role' => 'rider',
+                    'service_type' => 'medicine',
+                    'event' => 'new_delivery_request',
+                    'order_id' => $order->id,
+                    'order_no' => $order->order_no,
+                    'screen' => 'rider_dashboard',
+                ],
+            ]);
+        }
+
+        $tokens = DeviceToken::query()->whereIn('user_id', $userIds)->pluck('token')->all();
+        if (! $tokens) {
+            return;
+        }
+
+        try {
+            app(FcmService::class)->sendToTokens($tokens, [
+                'data' => [
+                    'type' => 'rider_order_request',
+                    'role' => 'rider',
+                    'service_type' => 'medicine',
+                    'event' => 'new_delivery_request',
+                    'title' => $title,
+                    'message' => $message,
+                    'order_id' => $order->id,
+                    'order_no' => $order->order_no,
+                    'screen' => 'rider_dashboard',
+                ],
+                'notification' => ['title' => $title, 'body' => $message],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Medicine rider dispatch notification failed', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+        }
+    }
+
     private function decorateOrder(MedicineOrder $order): MedicineOrder
     {
+        $order->service_type = 'medicine';
         $path = $order->payment_proof_photo;
         $order->payment_proof_photo_url = $path ? asset('storage/'.$path) : null;
+        $order->delivery_proof_photo_url = $order->delivery_proof_photo ? asset('storage/'.$order->delivery_proof_photo) : null;
+        $order->rider_assignment_status = $order->rider_id ? 'accepted' : 'not_accepted';
+        $order->rider_assignment_label = $order->rider_id ? 'Rider accepted' : 'Waiting for rider';
         $order->payment_options = $this->paymentOptions();
         $order->payment_notice = MedicinePaymentSetting::current()->payment_notice;
 

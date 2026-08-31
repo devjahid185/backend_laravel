@@ -22,4 +22,9 @@ class MedicineOrder extends Model
     {
         return $this->belongsTo(Rider::class);
     }
+
+    public function riderRequests()
+    {
+        return $this->hasMany(RiderOrderRequest::class);
+    }
 }
