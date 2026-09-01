@@ -392,10 +392,7 @@ class RiderController extends Controller
             ->whereIn('id', RiderOrderRequest::query()
                 ->select('medicine_order_id')
                 ->where('rider_id', $rider->id)
-                ->where('status', 'pending')
-                ->where(function ($query): void {
-                    $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
-                }))
+                ->where('status', 'pending'))
             ->whereNull('rider_id')
             ->whereIn('status', ['pending', 'accepted', 'preparing'])
             ->latest()
@@ -403,7 +400,7 @@ class RiderController extends Controller
             ->get()
             ->map(fn (MedicineOrder $order) => $this->decorateRiderOrder($order, 'medicine'));
 
-        return $foodOrders->merge($medicineOrders)->sortByDesc('created_at')->values();
+        return collect($foodOrders)->merge($medicineOrders)->sortByDesc('created_at')->values();
     }
 
     private function recordDeliveryEarning(Rider $rider, FoodOrder|MedicineOrder $order): void
@@ -564,7 +561,15 @@ class RiderController extends Controller
             });
 
         foreach ($orders as $order) {
-            $request = RiderOrderRequest::query()->updateOrCreate(
+            $existing = RiderOrderRequest::query()
+                ->where('food_order_id', $order->id)
+                ->where('rider_id', $rider->id)
+                ->first();
+            if ($this->shouldSkipRepeatedDispatch($existing)) {
+                continue;
+            }
+
+            RiderOrderRequest::query()->updateOrCreate(
                 ['food_order_id' => $order->id, 'rider_id' => $rider->id],
                 [
                     'distance_km' => round((float) $order->rider_dispatch_distance_km, 2),
@@ -577,9 +582,7 @@ class RiderController extends Controller
                 ]
             );
 
-            if ($request->wasRecentlyCreated || $request->wasChanged(['status', 'expires_at'])) {
-                $this->notifyRiderAboutOrder($rider, $order);
-            }
+            $this->notifyRiderAboutOrder($rider, $order);
         }
 
         $medicineOrders = MedicineOrder::query()
@@ -590,7 +593,15 @@ class RiderController extends Controller
             ->get();
 
         foreach ($medicineOrders as $order) {
-            $request = RiderOrderRequest::query()->updateOrCreate(
+            $existing = RiderOrderRequest::query()
+                ->where('medicine_order_id', $order->id)
+                ->where('rider_id', $rider->id)
+                ->first();
+            if ($this->shouldSkipRepeatedDispatch($existing)) {
+                continue;
+            }
+
+            RiderOrderRequest::query()->updateOrCreate(
                 ['medicine_order_id' => $order->id, 'rider_id' => $rider->id],
                 [
                     'food_order_id' => null,
@@ -604,10 +615,21 @@ class RiderController extends Controller
                 ]
             );
 
-            if ($request->wasRecentlyCreated || $request->wasChanged(['status', 'expires_at'])) {
-                $this->notifyRiderAboutMedicineOrder($rider, $order);
-            }
+            $this->notifyRiderAboutMedicineOrder($rider, $order);
         }
+    }
+
+    private function shouldSkipRepeatedDispatch(?RiderOrderRequest $request): bool
+    {
+        if (! $request) {
+            return false;
+        }
+
+        if ($request->status === 'pending') {
+            return true;
+        }
+
+        return in_array($request->status, ['accepted', 'rejected', 'expired'], true);
     }
 
     private function notifyRiderAboutOrder(Rider $rider, FoodOrder $order): void
