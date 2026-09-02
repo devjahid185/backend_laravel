@@ -494,12 +494,13 @@ class FoodDeliveryController extends Controller
         $deliveryFee = $charge['fee'];
         [$discount, $coupon] = $this->couponDiscount($data['coupon_code'] ?? null, $itemsTotal, $deliveryFee, $cart->restaurant_id);
         $grand = max(0, $itemsTotal + $deliveryFee - $discount);
+        $commission = $this->restaurantCommission($cart->restaurant, $itemsTotal);
 
         $proofPhotoPath = $request->hasFile('payment_proof_photo')
             ? $request->file('payment_proof_photo')->store('food/payment-proofs', 'public')
             : null;
 
-        $order = DB::transaction(function () use ($request, $cart, $address, $data, $itemsTotal, $deliveryFee, $discount, $coupon, $grand, $charge, $paymentMethod, $proofPhotoPath) {
+        $order = DB::transaction(function () use ($request, $cart, $address, $data, $itemsTotal, $deliveryFee, $discount, $coupon, $grand, $charge, $paymentMethod, $proofPhotoPath, $commission) {
             $order = FoodOrder::query()->create([
                 'order_no' => 'FD-' . now()->format('ymd') . '-' . strtoupper(Str::random(6)),
                 'user_id' => $request->user()->id,
@@ -522,6 +523,11 @@ class FoodDeliveryController extends Controller
                     ? $proofPhotoPath
                     : null,
                 'items_total' => $itemsTotal,
+                'restaurant_commission_type' => $commission['type'],
+                'restaurant_commission_rate' => $commission['rate'],
+                'restaurant_commission_fixed_fee' => $commission['fixed_fee'],
+                'restaurant_commission_amount' => $commission['amount'],
+                'restaurant_owner_payable' => $commission['owner_payable'],
                 'delivery_fee' => $deliveryFee,
                 'delivery_distance_km' => $charge['distance_km'],
                 'delivery_charge_mode' => $charge['mode'],
@@ -1109,6 +1115,30 @@ class FoodDeliveryController extends Controller
         $fee = max((float) $settings->minimum_charge, $fee);
 
         return ['fee' => round($fee, 2), 'distance_km' => $distanceKm === null ? null : round($distanceKm, 2), 'mode' => 'per_km'];
+    }
+
+    private function restaurantCommission(?Restaurant $restaurant, float $itemsTotal): array
+    {
+        $enabled = (bool) ($restaurant?->commission_enabled ?? true);
+        $type = $enabled ? (string) ($restaurant?->commission_type ?? 'percentage') : 'none';
+        $rate = $enabled ? (float) ($restaurant?->commission_rate ?? 10) : 0;
+        $fixedFee = $enabled ? (float) ($restaurant?->commission_fixed_fee ?? 0) : 0;
+
+        $amount = match ($type) {
+            'fixed' => $fixedFee,
+            'percentage_plus_fixed' => ($itemsTotal * ($rate / 100)) + $fixedFee,
+            'none' => 0,
+            default => $itemsTotal * ($rate / 100),
+        };
+        $amount = round(min($itemsTotal, max(0, $amount)), 2);
+
+        return [
+            'type' => $type,
+            'rate' => round($rate, 2),
+            'fixed_fee' => round($fixedFee, 2),
+            'amount' => $amount,
+            'owner_payable' => round(max(0, $itemsTotal - $amount), 2),
+        ];
     }
 
     private function municipalityDeliveryCharge(FoodDeliverySetting $settings, float $lat, float $lng, ?float $distanceKm): array

@@ -122,7 +122,7 @@ class AdminResourceController extends Controller
         $query = $model::query();
         if ($resource === 'food-orders') {
             $query->with([
-                'restaurant:id,name,phone,address,lat,lng',
+                'restaurant:id,name,phone,address,lat,lng,commission_enabled,commission_type,commission_rate,commission_fixed_fee,settlement_cycle',
                 'rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
             ])->withCount([
                 'riderRequests as pending_rider_requests_count' => fn ($q) => $q->where('status', 'pending'),
@@ -180,7 +180,7 @@ class AdminResourceController extends Controller
         if ($resource === 'food-orders') {
             $query->with([
                 'items',
-                'restaurant:id,name,phone,address,lat,lng',
+                'restaurant:id,name,phone,address,lat,lng,commission_enabled,commission_type,commission_rate,commission_fixed_fee,settlement_cycle',
                 'address',
                 'rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
                 'riderRequests.rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
@@ -259,7 +259,7 @@ class AdminResourceController extends Controller
 
     public function foodOrderPaymentSummary(Request $request): JsonResponse
     {
-        $base = FoodOrder::query()->with('restaurant:id,name,user_id,manual_bkash_number,manual_nagad_number');
+        $base = FoodOrder::query()->with('restaurant:id,name,user_id,manual_bkash_number,manual_nagad_number,commission_enabled,commission_type,commission_rate,commission_fixed_fee,settlement_cycle');
         $this->applyFoodOrderFilters($base, $request);
 
         $orders = $base->get();
@@ -286,6 +286,12 @@ class AdminResourceController extends Controller
                     'delivery_fee_total' => round((float) $rows->sum('delivery_fee'), 2),
                     'rider_payout_total' => $financials['rider_payout_total'],
                     'admin_delivery_income_total' => $financials['admin_delivery_income_total'],
+                    'restaurant_commission_total' => $financials['restaurant_commission_total'],
+                    'restaurant_owner_payable_total' => $financials['restaurant_owner_payable_total'],
+                    'admin_total_income' => $financials['admin_total_income'],
+                    'owner_settlement_due_total' => $financials['owner_settlement_due_total'],
+                    'owner_payable_after_manual_total' => $financials['owner_payable_after_manual_total'],
+                    'settlement_cycle' => $first->restaurant?->settlement_cycle ?: 'weekly',
                     'grand_total' => round((float) $rows->sum('grand_total'), 2),
                 ];
             })
@@ -301,6 +307,9 @@ class AdminResourceController extends Controller
                 'delivery_fee_total' => round((float) $rows->sum('delivery_fee'), 2),
                 'rider_payout_total' => $this->deliveryFinancialTotals($rows, $settings)['rider_payout_total'],
                 'admin_delivery_income_total' => $this->deliveryFinancialTotals($rows, $settings)['admin_delivery_income_total'],
+                'restaurant_commission_total' => $this->deliveryFinancialTotals($rows, $settings)['restaurant_commission_total'],
+                'restaurant_owner_payable_total' => $this->deliveryFinancialTotals($rows, $settings)['restaurant_owner_payable_total'],
+                'admin_total_income' => $this->deliveryFinancialTotals($rows, $settings)['admin_total_income'],
             ])
             ->values();
 
@@ -312,6 +321,11 @@ class AdminResourceController extends Controller
                 'delivery_fee_total' => round((float) $orders->sum('delivery_fee'), 2),
                 'rider_payout_total' => $deliveryFinancials['rider_payout_total'],
                 'admin_delivery_income_total' => $deliveryFinancials['admin_delivery_income_total'],
+                'restaurant_commission_total' => $deliveryFinancials['restaurant_commission_total'],
+                'restaurant_owner_payable_total' => $deliveryFinancials['restaurant_owner_payable_total'],
+                'admin_total_income' => $deliveryFinancials['admin_total_income'],
+                'owner_settlement_due_total' => $deliveryFinancials['owner_settlement_due_total'],
+                'owner_payable_after_manual_total' => $deliveryFinancials['owner_payable_after_manual_total'],
                 'owner_received_total' => round((float) $orders->whereIn('payment_method', ['manual_bkash', 'manual_nagad'])->sum('grand_total'), 2),
                 'cod_collectable_total' => round((float) $orders->where('payment_method', 'cash_on_delivery')->sum('grand_total'), 2),
             ],
@@ -329,7 +343,7 @@ class AdminResourceController extends Controller
     public function deliveryIncomeSummary(Request $request): JsonResponse
     {
         $settings = FoodDeliverySetting::current();
-        $foodQuery = FoodOrder::query();
+        $foodQuery = FoodOrder::query()->with('restaurant:id,commission_enabled,commission_type,commission_rate,commission_fixed_fee');
         $this->applyFoodOrderFilters($foodQuery, $request);
         $medicineQuery = MedicineOrder::query();
         $this->applyDeliveryOrderFilters($medicineQuery, $request, false);
@@ -433,6 +447,10 @@ class AdminResourceController extends Controller
         $deliveryFee = 0;
         $riderPayout = 0;
         $adminIncome = 0;
+        $restaurantCommission = 0;
+        $restaurantOwnerPayable = 0;
+        $ownerSettlementDue = 0;
+        $ownerPayableAfterManual = 0;
 
         foreach ($orders as $order) {
             $fee = (float) ($order->delivery_fee ?? 0);
@@ -448,12 +466,34 @@ class AdminResourceController extends Controller
             $deliveryFee += $fee;
             $riderPayout += $rider;
             $adminIncome += $admin;
+
+            if ($order instanceof FoodOrder) {
+                $commission = (float) ($order->restaurant_commission_amount ?? 0);
+                $ownerPayable = (float) ($order->restaurant_owner_payable ?? 0);
+                if ($commission <= 0 && (float) ($order->items_total ?? 0) > 0) {
+                    $estimated = $this->estimateRestaurantCommission($order);
+                    $commission = $estimated['amount'];
+                    $ownerPayable = $estimated['owner_payable'];
+                }
+                $manualReceived = in_array($order->payment_method, ['manual_bkash', 'manual_nagad'], true)
+                    ? (float) ($order->grand_total ?? 0)
+                    : 0;
+                $restaurantCommission += $commission;
+                $restaurantOwnerPayable += $ownerPayable;
+                $ownerSettlementDue += $order->payment_method === 'cash_on_delivery' ? $ownerPayable : 0;
+                $ownerPayableAfterManual += $ownerPayable - $manualReceived;
+            }
         }
 
         return [
             'delivery_fee_total' => round($deliveryFee, 2),
             'rider_payout_total' => round($riderPayout, 2),
             'admin_delivery_income_total' => round($adminIncome, 2),
+            'restaurant_commission_total' => round($restaurantCommission, 2),
+            'restaurant_owner_payable_total' => round($restaurantOwnerPayable, 2),
+            'admin_total_income' => round($adminIncome + $restaurantCommission, 2),
+            'owner_settlement_due_total' => round($ownerSettlementDue, 2),
+            'owner_payable_after_manual_total' => round($ownerPayableAfterManual, 2),
         ];
     }
 
@@ -488,8 +528,37 @@ class AdminResourceController extends Controller
         return round(min($deliveryFee, $riderFixed), 2);
     }
 
+    private function estimateRestaurantCommission(FoodOrder $order): array
+    {
+        $itemsTotal = (float) ($order->items_total ?? 0);
+        $restaurant = $order->restaurant;
+        $enabled = (bool) ($restaurant?->commission_enabled ?? true);
+        $type = $enabled ? (string) ($order->restaurant_commission_type ?: ($restaurant?->commission_type ?? 'percentage')) : 'none';
+        $rate = $enabled ? (float) ($order->restaurant_commission_rate ?: ($restaurant?->commission_rate ?? 10)) : 0;
+        $fixedFee = $enabled ? (float) ($order->restaurant_commission_fixed_fee ?: ($restaurant?->commission_fixed_fee ?? 0)) : 0;
+
+        $amount = match ($type) {
+            'fixed' => $fixedFee,
+            'percentage_plus_fixed' => ($itemsTotal * ($rate / 100)) + $fixedFee,
+            'none' => 0,
+            default => $itemsTotal * ($rate / 100),
+        };
+        $amount = round(min($itemsTotal, max(0, $amount)), 2);
+
+        return [
+            'amount' => $amount,
+            'owner_payable' => round(max(0, $itemsTotal - $amount), 2),
+        ];
+    }
+
     private function decorateFoodOrder(FoodOrder $order): FoodOrder
     {
+        if ((float) ($order->restaurant_commission_amount ?? 0) <= 0 && (float) ($order->items_total ?? 0) > 0) {
+            $commission = $this->estimateRestaurantCommission($order);
+            $order->restaurant_commission_amount = $commission['amount'];
+            $order->restaurant_owner_payable = $commission['owner_payable'];
+        }
+        $order->admin_total_income = round((float) ($order->admin_delivery_income ?? 0) + (float) ($order->restaurant_commission_amount ?? 0), 2);
         $order->service_type = 'food';
         $order->rider_assignment_status = $order->rider_id ? 'accepted' : 'not_accepted';
         $order->rider_assignment_label = $order->rider_id
