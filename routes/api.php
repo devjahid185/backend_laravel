@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\AdminMapSettingController;
 use App\Http\Controllers\Api\AdminMedicinePaymentSettingController;
 use App\Http\Controllers\Api\AdminNotificationController;
 use App\Http\Controllers\Api\AdminProfileController;
+use App\Http\Controllers\Api\AdminRiderSettingController;
 use App\Http\Controllers\Api\AdminSmsSettingController;
 use App\Http\Controllers\Api\AdminSupportSettingController;
 use App\Http\Controllers\Api\AdminUserController;
@@ -102,6 +103,8 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::put('/admin/app-version-settings', [AdminAppVersionSettingController::class, 'update']);
     Route::get('/admin/map-settings', [AdminMapSettingController::class, 'show']);
     Route::put('/admin/map-settings', [AdminMapSettingController::class, 'update']);
+    Route::get('/admin/rider-settings', [AdminRiderSettingController::class, 'show']);
+    Route::put('/admin/rider-settings', [AdminRiderSettingController::class, 'update']);
     Route::get('/admin/support-settings', [AdminSupportSettingController::class, 'show']);
     Route::put('/admin/support-settings', [AdminSupportSettingController::class, 'update']);
     Route::get('/admin/home-banners', [HomeBannerController::class, 'adminIndex']);

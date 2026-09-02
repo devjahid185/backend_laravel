@@ -13,6 +13,7 @@ use App\Models\RiderDocument;
 use App\Models\RiderLocation;
 use App\Models\RiderOrderRequest;
 use App\Models\RiderRating;
+use App\Models\RiderSetting;
 use App\Models\RiderSupportTicket;
 use App\Models\RiderWalletEntry;
 use App\Services\FcmService;
@@ -29,6 +30,7 @@ class RiderController extends Controller
         $rider = $this->riderFor($request, false);
         return response()->json([
             'rider' => $rider?->load(['documents', 'walletEntries' => fn ($q) => $q->latest()->limit(20)]),
+            'settings' => RiderSetting::current(),
             'labels' => $this->labels(),
         ]);
     }
@@ -47,6 +49,12 @@ class RiderController extends Controller
             'vehicle_number' => ['nullable', 'string', 'max:80'],
             'emergency_contact_name' => ['nullable', 'string', 'max:120'],
             'emergency_contact_phone' => ['required', 'string', 'max:40'],
+            'bkash_number' => ['nullable', 'string', 'max:40'],
+            'nagad_number' => ['nullable', 'string', 'max:40'],
+            'bank_account_name' => ['nullable', 'string', 'max:120'],
+            'bank_account_number' => ['nullable', 'string', 'max:80'],
+            'bank_name' => ['nullable', 'string', 'max:120'],
+            'bank_branch' => ['nullable', 'string', 'max:120'],
         ]);
 
         if ($request->hasFile('profile_photo')) {
