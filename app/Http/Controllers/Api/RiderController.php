@@ -547,12 +547,13 @@ class RiderController extends Controller
         $data = $order->toArray();
         $data['service_type'] = $serviceType;
         if ($serviceType === 'medicine') {
+            $settings = FoodDeliverySetting::current();
             $data['restaurant'] = [
                 'name' => 'Medicine Store',
                 'phone' => config('app.name'),
                 'address' => 'Medicine pickup point',
-                'lat' => null,
-                'lng' => null,
+                'lat' => $settings->store_lat,
+                'lng' => $settings->store_lng,
             ];
             $data['items'] = collect($data['items'] ?? [])->map(function (array $item): array {
                 $item['name'] = $item['brand_name'] ?? 'Medicine';
