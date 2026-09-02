@@ -133,6 +133,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
 
     Route::get('/admin/resources/{resource}', [AdminResourceController::class, 'index']);
     Route::get('/admin/food-orders/payment-summary', [AdminResourceController::class, 'foodOrderPaymentSummary']);
+    Route::get('/admin/delivery-income-summary', [AdminResourceController::class, 'deliveryIncomeSummary']);
     Route::post('/admin/resources/{resource}', [AdminResourceController::class, 'store']);
     Route::get('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'show'])->whereNumber('id');
     Route::put('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'update'])->whereNumber('id');

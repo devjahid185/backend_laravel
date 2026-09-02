@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\AppNotification;
 use App\Models\DeviceToken;
+use App\Models\FoodDeliverySetting;
 use App\Models\FoodOrder;
 use App\Models\MedicineOrder;
 use App\Models\Rider;
@@ -235,6 +236,7 @@ class RiderController extends Controller
                 'delivery_person_phone' => $rider->phone,
                 'rider_assigned_at' => now(),
                 'rider_earning' => $earning,
+                'admin_delivery_income' => $this->calculateAdminDeliveryIncome($order, $earning),
             ];
             if ($serviceType === 'medicine' && $order->status === 'pending') {
                 $payload['status'] = 'accepted';
@@ -413,7 +415,10 @@ class RiderController extends Controller
             $rider->cash_in_hand = (float) $rider->cash_in_hand + $cash;
             $rider->availability_status = 'online';
             $rider->save();
-            $order->update(['rider_earning' => $earning]);
+            $order->update([
+                'rider_earning' => $earning,
+                'admin_delivery_income' => $this->calculateAdminDeliveryIncome($order, $earning),
+            ]);
             RiderWalletEntry::query()->create([
                 'rider_id' => $rider->id,
                 'food_order_id' => $order instanceof FoodOrder ? $order->id : null,
@@ -441,11 +446,39 @@ class RiderController extends Controller
 
     private function calculateEarning(Rider $rider, FoodOrder|MedicineOrder $order): float
     {
-        return match ($rider->commission_type) {
-            'percentage' => round(((float) $order->delivery_fee) * ((float) $rider->commission_value / 100), 2),
-            'zone_based' => round(max((float) $rider->commission_value, (float) $order->delivery_fee * 0.65), 2),
-            default => round((float) ($rider->commission_value ?: $order->delivery_fee), 2),
-        };
+        $settings = FoodDeliverySetting::current();
+        $deliveryFee = (float) $order->delivery_fee;
+        $mode = (string) ($order->delivery_charge_mode ?? 'fixed');
+        $fixedCharge = str_starts_with($mode, 'municipality')
+            ? (float) ($settings->municipality_fixed_charge ?? $settings->fixed_charge ?? 50)
+            : (float) ($settings->fixed_charge ?? $settings->base_charge ?? 0);
+        $perKmCharge = str_starts_with($mode, 'municipality')
+            ? (float) ($settings->municipality_extra_per_km_charge ?? 0)
+            : (float) ($settings->per_km_charge ?? 0);
+        $riderFixed = (float) ($settings->rider_fixed_earning ?? $fixedCharge);
+        $riderPerKm = (float) ($settings->rider_per_km_earning ?? $perKmCharge);
+
+        if (str_contains($mode, 'outside_per_km')) {
+            $variableFee = max(0, $deliveryFee - $fixedCharge);
+            $outsideKm = $perKmCharge > 0 ? $variableFee / $perKmCharge : 0;
+            return round(min($deliveryFee, $riderFixed + ($outsideKm * $riderPerKm)), 2);
+        }
+
+        if ($mode === 'per_km') {
+            $baseFee = min($deliveryFee, max($fixedCharge, (float) ($settings->base_charge ?? 0)));
+            $variableFee = max(0, $deliveryFee - $baseFee);
+            $variableKm = $perKmCharge > 0
+                ? $variableFee / $perKmCharge
+                : max(0, (float) ($order->delivery_distance_km ?? 0));
+            return round(min($deliveryFee, $riderFixed + ($variableKm * $riderPerKm)), 2);
+        }
+
+        return round(min($deliveryFee, $riderFixed), 2);
+    }
+
+    private function calculateAdminDeliveryIncome(FoodOrder|MedicineOrder $order, float $riderEarning): float
+    {
+        return round(max(0, (float) $order->delivery_fee - $riderEarning), 2);
     }
 
     private function pendingOrderRequestFor(Request $request, int $id, Rider $rider, bool $lock = false): array

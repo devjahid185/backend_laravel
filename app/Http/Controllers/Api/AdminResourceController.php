@@ -19,6 +19,7 @@ use App\Models\FoodAddress;
 use App\Models\FoodBanner;
 use App\Models\FoodCategory;
 use App\Models\FoodCoupon;
+use App\Models\FoodDeliverySetting;
 use App\Models\FoodItem;
 use App\Models\FoodOrder;
 use App\Models\FoodOrderSupportTicket;
@@ -137,6 +138,7 @@ class AdminResourceController extends Controller
                 'riderRequests as pending_rider_requests_count' => fn ($q) => $q->where('status', 'pending'),
                 'riderRequests as total_rider_requests_count',
             ]);
+            $this->applyDeliveryOrderFilters($query, $request, false);
         }
         $search = trim((string) $request->query('search', ''));
         if ($search !== '') {
@@ -261,11 +263,14 @@ class AdminResourceController extends Controller
         $this->applyFoodOrderFilters($base, $request);
 
         $orders = $base->get();
+        $settings = FoodDeliverySetting::current();
+        $deliveryFinancials = $this->deliveryFinancialTotals($orders, $settings);
         $ownerRows = $orders
             ->groupBy('restaurant_id')
-            ->map(function ($rows) {
+            ->map(function ($rows) use ($settings) {
                 $first = $rows->first();
                 $manualRows = $rows->whereIn('payment_method', ['manual_bkash', 'manual_nagad']);
+                $financials = $this->deliveryFinancialTotals($rows, $settings);
 
                 return [
                     'restaurant_id' => $first->restaurant_id,
@@ -279,6 +284,8 @@ class AdminResourceController extends Controller
                     'owner_received_total' => round((float) $manualRows->sum('grand_total'), 2),
                     'cod_collectable_total' => round((float) $rows->where('payment_method', 'cash_on_delivery')->sum('grand_total'), 2),
                     'delivery_fee_total' => round((float) $rows->sum('delivery_fee'), 2),
+                    'rider_payout_total' => $financials['rider_payout_total'],
+                    'admin_delivery_income_total' => $financials['admin_delivery_income_total'],
                     'grand_total' => round((float) $rows->sum('grand_total'), 2),
                 ];
             })
@@ -292,18 +299,84 @@ class AdminResourceController extends Controller
                 'orders_count' => $rows->count(),
                 'grand_total' => round((float) $rows->sum('grand_total'), 2),
                 'delivery_fee_total' => round((float) $rows->sum('delivery_fee'), 2),
+                'rider_payout_total' => $this->deliveryFinancialTotals($rows, $settings)['rider_payout_total'],
+                'admin_delivery_income_total' => $this->deliveryFinancialTotals($rows, $settings)['admin_delivery_income_total'],
             ])
             ->values();
 
         return response()->json([
             'totals' => [
                 'orders_count' => $orders->count(),
+                'delivered_orders_count' => $orders->where('status', 'delivered')->count(),
                 'grand_total' => round((float) $orders->sum('grand_total'), 2),
                 'delivery_fee_total' => round((float) $orders->sum('delivery_fee'), 2),
+                'rider_payout_total' => $deliveryFinancials['rider_payout_total'],
+                'admin_delivery_income_total' => $deliveryFinancials['admin_delivery_income_total'],
                 'owner_received_total' => round((float) $orders->whereIn('payment_method', ['manual_bkash', 'manual_nagad'])->sum('grand_total'), 2),
                 'cod_collectable_total' => round((float) $orders->where('payment_method', 'cash_on_delivery')->sum('grand_total'), 2),
             ],
             'by_owner' => $ownerRows,
+            'by_method' => $methodRows,
+            'settings' => [
+                'fixed_charge' => (float) ($settings->municipality_fixed_charge ?? $settings->fixed_charge ?? 50),
+                'per_km_charge' => (float) ($settings->municipality_extra_per_km_charge ?? $settings->per_km_charge ?? 15),
+                'rider_fixed_earning' => (float) ($settings->rider_fixed_earning ?? $settings->municipality_fixed_charge ?? 50),
+                'rider_per_km_earning' => (float) ($settings->rider_per_km_earning ?? $settings->municipality_extra_per_km_charge ?? 15),
+            ],
+        ]);
+    }
+
+    public function deliveryIncomeSummary(Request $request): JsonResponse
+    {
+        $settings = FoodDeliverySetting::current();
+        $foodQuery = FoodOrder::query();
+        $this->applyFoodOrderFilters($foodQuery, $request);
+        $medicineQuery = MedicineOrder::query();
+        $this->applyDeliveryOrderFilters($medicineQuery, $request, false);
+
+        $foodOrders = $foodQuery->get();
+        $medicineOrders = $medicineQuery->get();
+        $allOrders = $foodOrders->concat($medicineOrders);
+        $food = $this->deliveryFinancialTotals($foodOrders, $settings);
+        $medicine = $this->deliveryFinancialTotals($medicineOrders, $settings);
+        $totals = $this->deliveryFinancialTotals($allOrders, $settings);
+        $methodRows = $allOrders
+            ->groupBy('payment_method')
+            ->map(fn ($rows, $method) => [
+                'payment_method' => $method ?: 'unknown',
+                'orders_count' => $rows->count(),
+                'grand_total' => round((float) $rows->sum('grand_total'), 2),
+                ...$this->deliveryFinancialTotals($rows, $settings),
+            ])
+            ->values();
+
+        return response()->json([
+            'totals' => $totals + [
+                'orders_count' => $allOrders->count(),
+                'delivered_orders_count' => $allOrders->where('status', 'delivered')->count(),
+                'grand_total' => round((float) $allOrders->sum('grand_total'), 2),
+                'cash_collected_total' => round((float) $allOrders->sum('cash_collected'), 2),
+            ],
+            'by_service' => [
+                [
+                    'service_type' => 'food',
+                    'orders_count' => $foodOrders->count(),
+                    'delivered_orders_count' => $foodOrders->where('status', 'delivered')->count(),
+                    ...$food,
+                ],
+                [
+                    'service_type' => 'medicine',
+                    'orders_count' => $medicineOrders->count(),
+                    'delivered_orders_count' => $medicineOrders->where('status', 'delivered')->count(),
+                    ...$medicine,
+                ],
+            ],
+            'settings' => [
+                'fixed_charge' => (float) ($settings->municipality_fixed_charge ?? $settings->fixed_charge ?? 50),
+                'per_km_charge' => (float) ($settings->municipality_extra_per_km_charge ?? $settings->per_km_charge ?? 15),
+                'rider_fixed_earning' => (float) ($settings->rider_fixed_earning ?? $settings->municipality_fixed_charge ?? 50),
+                'rider_per_km_earning' => (float) ($settings->rider_per_km_earning ?? $settings->municipality_extra_per_km_charge ?? 15),
+            ],
             'by_method' => $methodRows,
         ]);
     }
@@ -341,13 +414,78 @@ class AdminResourceController extends Controller
 
     private function applyFoodOrderFilters($query, Request $request): void
     {
+        $this->applyDeliveryOrderFilters($query, $request, true);
+    }
+
+    private function applyDeliveryOrderFilters($query, Request $request, bool $hasRestaurant = true): void
+    {
         $query
             ->when($request->filled('payment_method'), fn ($q) => $q->where('payment_method', $request->query('payment_method')))
             ->when($request->filled('payment_status'), fn ($q) => $q->where('payment_status', $request->query('payment_status')))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->query('status')))
-            ->when($request->filled('restaurant_id'), fn ($q) => $q->where('restaurant_id', (int) $request->query('restaurant_id')))
+            ->when($hasRestaurant && $request->filled('restaurant_id'), fn ($q) => $q->where('restaurant_id', (int) $request->query('restaurant_id')))
             ->when($request->filled('date_from'), fn ($q) => $q->whereDate('created_at', '>=', $request->query('date_from')))
             ->when($request->filled('date_to'), fn ($q) => $q->whereDate('created_at', '<=', $request->query('date_to')));
+    }
+
+    private function deliveryFinancialTotals($orders, FoodDeliverySetting $settings): array
+    {
+        $deliveryFee = 0;
+        $riderPayout = 0;
+        $adminIncome = 0;
+
+        foreach ($orders as $order) {
+            $fee = (float) ($order->delivery_fee ?? 0);
+            $rider = (float) ($order->rider_earning ?? 0);
+            if ($rider <= 0 && $fee > 0) {
+                $rider = $this->estimateRiderEarning($order, $settings);
+            }
+            $admin = (float) ($order->admin_delivery_income ?? 0);
+            if ($admin <= 0 && $fee > 0) {
+                $admin = max(0, $fee - $rider);
+            }
+
+            $deliveryFee += $fee;
+            $riderPayout += $rider;
+            $adminIncome += $admin;
+        }
+
+        return [
+            'delivery_fee_total' => round($deliveryFee, 2),
+            'rider_payout_total' => round($riderPayout, 2),
+            'admin_delivery_income_total' => round($adminIncome, 2),
+        ];
+    }
+
+    private function estimateRiderEarning(FoodOrder|MedicineOrder $order, FoodDeliverySetting $settings): float
+    {
+        $deliveryFee = (float) ($order->delivery_fee ?? 0);
+        $mode = (string) ($order->delivery_charge_mode ?? 'fixed');
+        $fixedCharge = str_starts_with($mode, 'municipality')
+            ? (float) ($settings->municipality_fixed_charge ?? $settings->fixed_charge ?? 50)
+            : (float) ($settings->fixed_charge ?? $settings->base_charge ?? 0);
+        $perKmCharge = str_starts_with($mode, 'municipality')
+            ? (float) ($settings->municipality_extra_per_km_charge ?? 0)
+            : (float) ($settings->per_km_charge ?? 0);
+        $riderFixed = (float) ($settings->rider_fixed_earning ?? $fixedCharge);
+        $riderPerKm = (float) ($settings->rider_per_km_earning ?? $perKmCharge);
+
+        if (str_contains($mode, 'outside_per_km')) {
+            $variableFee = max(0, $deliveryFee - $fixedCharge);
+            $outsideKm = $perKmCharge > 0 ? $variableFee / $perKmCharge : 0;
+            return round(min($deliveryFee, $riderFixed + ($outsideKm * $riderPerKm)), 2);
+        }
+
+        if ($mode === 'per_km') {
+            $baseFee = min($deliveryFee, max($fixedCharge, (float) ($settings->base_charge ?? 0)));
+            $variableFee = max(0, $deliveryFee - $baseFee);
+            $variableKm = $perKmCharge > 0
+                ? $variableFee / $perKmCharge
+                : max(0, (float) ($order->delivery_distance_km ?? 0));
+            return round(min($deliveryFee, $riderFixed + ($variableKm * $riderPerKm)), 2);
+        }
+
+        return round(min($deliveryFee, $riderFixed), 2);
     }
 
     private function decorateFoodOrder(FoodOrder $order): FoodOrder
