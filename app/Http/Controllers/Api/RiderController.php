@@ -144,7 +144,8 @@ class RiderController extends Controller
             ->get();
         $activeOrders = $activeFoodOrders
             ->map(fn (FoodOrder $order) => $this->decorateRiderOrder($order, 'food'))
-            ->merge($activeMedicineOrders->map(fn (MedicineOrder $order) => $this->decorateRiderOrder($order, 'medicine')))
+            ->toBase()
+            ->merge($activeMedicineOrders->map(fn (MedicineOrder $order) => $this->decorateRiderOrder($order, 'medicine'))->toBase())
             ->sortByDesc('created_at')
             ->values();
 
@@ -410,7 +411,7 @@ class RiderController extends Controller
             ->get()
             ->map(fn (MedicineOrder $order) => $this->decorateRiderOrder($order, 'medicine'));
 
-        return collect($foodOrders)->merge($medicineOrders)->sortByDesc('created_at')->values();
+        return $foodOrders->toBase()->merge($medicineOrders->toBase())->sortByDesc('created_at')->values();
     }
 
     private function recordDeliveryEarning(Rider $rider, FoodOrder|MedicineOrder $order): void
