@@ -211,6 +211,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
         Route::get('/orders', [RiderController::class, 'orders']);
         Route::post('/orders/{id}/accept', [RiderController::class, 'acceptOrder'])->whereNumber('id');
         Route::post('/orders/{id}/reject', [RiderController::class, 'rejectOrder'])->whereNumber('id');
+        Route::post('/orders/{id}/delivery-otp', [RiderController::class, 'requestDeliveryOtp'])->whereNumber('id');
         Route::post('/orders/{id}/status', [RiderController::class, 'updateOrderStatus'])->whereNumber('id');
         Route::get('/wallet', [RiderController::class, 'wallet']);
         Route::get('/support-tickets', [RiderController::class, 'supportTickets']);

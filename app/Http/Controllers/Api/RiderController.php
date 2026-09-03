@@ -17,6 +17,7 @@ use App\Models\RiderSetting;
 use App\Models\RiderSupportTicket;
 use App\Models\RiderWalletEntry;
 use App\Services\FcmService;
+use App\Services\SmsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -315,8 +316,15 @@ class RiderController extends Controller
         [$order, $serviceType] = $this->assignedOrderFor($request, $id, $rider);
         abort_unless(in_array($order->status, ['accepted', 'preparing', 'picked_up', 'on_the_way'], true), 422, 'স্ট্যাটাস আপডেট করা যাবে না।');
 
-        if ($data['status'] === 'delivered' && $order->delivery_otp && ($data['delivery_otp'] ?? '') !== $order->delivery_otp) {
-            abort(422, 'ডেলিভারি OTP সঠিক নয়।');
+        if ($data['status'] === 'delivered') {
+            if (! $order->delivery_otp || ($order->delivery_otp_expires_at && $order->delivery_otp_expires_at->isPast())) {
+                $otpReady = $this->prepareDeliveryOtp($order, $serviceType);
+                abort_if($otpReady, 422, 'কাস্টমারের কাছে ডেলিভারি OTP পাঠানো হয়েছে। OTP দিয়ে আবার কনফার্ম করুন।');
+                $order = $this->freshOrderForService($order, $serviceType);
+            }
+            if ($order->delivery_otp && ($data['delivery_otp'] ?? '') !== $order->delivery_otp) {
+                abort(422, 'ডেলিভারি OTP সঠিক নয়।');
+            }
         }
 
         $payload = ['status' => $data['status']];
@@ -326,6 +334,8 @@ class RiderController extends Controller
         if ($data['status'] === 'delivered') {
             $payload['delivered_at'] = now();
             $payload['cash_collected'] = (float) ($data['cash_collected'] ?? $order->grand_total);
+            $payload['delivery_otp'] = null;
+            $payload['delivery_otp_expires_at'] = null;
             if ($request->hasFile('proof_photo')) {
                 $payload['delivery_proof_photo'] = $request->file('proof_photo')->store('riders/delivery-proof', 'public');
             }
@@ -339,6 +349,29 @@ class RiderController extends Controller
         return response()->json([
             'message' => 'অর্ডার স্ট্যাটাস আপডেট হয়েছে।',
             'order' => $this->decorateRiderOrder($this->freshOrderForService($order, $serviceType), $serviceType),
+        ]);
+    }
+
+    public function requestDeliveryOtp(Request $request, int $id): JsonResponse
+    {
+        $rider = $this->riderFor($request);
+        [$order, $serviceType] = $this->assignedOrderFor($request, $id, $rider);
+        abort_unless(in_array($order->status, ['picked_up', 'on_the_way'], true), 422, 'ডেলিভারি OTP এখন পাঠানো যাবে না।');
+
+        $otpReady = $this->prepareDeliveryOtp($order, $serviceType);
+        if (! $otpReady) {
+            return response()->json([
+                'message' => 'OTP পাঠানো যায়নি, তাই OTP ছাড়াই ডেলিভারি কনফার্ম করা যাবে।',
+                'otp_required' => false,
+                'fallback_delivery_allowed' => true,
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'কাস্টমারের কাছে ৬ ডিজিট OTP পাঠানো হয়েছে।',
+            'otp_required' => true,
+            'fallback_delivery_allowed' => false,
+            'expires_in_seconds' => 300,
         ]);
     }
 
@@ -784,6 +817,93 @@ class RiderController extends Controller
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    private function prepareDeliveryOtp(FoodOrder|MedicineOrder $order, string $serviceType): bool
+    {
+        $freshOrder = $this->freshOrderForService($order, $serviceType);
+        if ($freshOrder->delivery_otp && $freshOrder->delivery_otp_expires_at && $freshOrder->delivery_otp_expires_at->isFuture()) {
+            return true;
+        }
+
+        $otp = (string) random_int(100000, 999999);
+        $freshOrder->forceFill([
+            'delivery_otp' => $otp,
+            'delivery_otp_sent_at' => now(),
+            'delivery_otp_expires_at' => now()->addMinutes(5),
+            'delivery_otp_send_failed_at' => null,
+            'delivery_otp_send_error' => null,
+        ])->save();
+
+        try {
+            app(SmsService::class)->send(
+                $freshOrder->receiver_phone,
+                "ভোলাবাসী {$freshOrder->order_no} ডেলিভারি OTP: {$otp}. রাইডারকে OTP দিন, কাউকে শেয়ার করবেন না।"
+            );
+            $this->notifyCustomerDeliveryOtp($freshOrder, $serviceType, $otp);
+            return true;
+        } catch (\Throwable $e) {
+            $freshOrder->forceFill([
+                'delivery_otp' => null,
+                'delivery_otp_expires_at' => null,
+                'delivery_otp_send_failed_at' => now(),
+                'delivery_otp_send_error' => Str::limit($e->getMessage(), 240),
+            ])->save();
+            Log::error('Delivery OTP send failed; allowing fallback delivery confirmation', [
+                'service_type' => $serviceType,
+                'order_id' => $freshOrder->id,
+                'order_no' => $freshOrder->order_no,
+                'receiver_phone_masked' => $this->maskPhone((string) $freshOrder->receiver_phone),
+                'error' => $e->getMessage(),
+            ]);
+            return false;
+        }
+    }
+
+    private function notifyCustomerDeliveryOtp(FoodOrder|MedicineOrder $order, string $serviceType, string $otp): void
+    {
+        $title = 'ডেলিভারি OTP';
+        $message = "{$order->order_no} ডেলিভারি নিশ্চিত করতে OTP {$otp} রাইডারকে দিন।";
+        $data = [
+            'type' => 'delivery_otp',
+            'service_type' => $serviceType,
+            'order_id' => $order->id,
+            'order_no' => $order->order_no,
+        ];
+
+        AppNotification::query()->create([
+            'user_id' => $order->user_id,
+            'title' => $title,
+            'message' => $message,
+            'data' => $data,
+        ]);
+
+        $tokens = DeviceToken::query()->where('user_id', $order->user_id)->pluck('token')->all();
+        if (! $tokens) {
+            return;
+        }
+
+        try {
+            app(FcmService::class)->sendToTokens($tokens, [
+                'data' => $data + ['title' => $title, 'message' => $message],
+                'notification' => ['title' => $title, 'body' => $message],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Delivery OTP push notification failed', [
+                'service_type' => $serviceType,
+                'order_id' => $order->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function maskPhone(string $phone): string
+    {
+        $digits = preg_replace('/\D+/', '', $phone) ?: '';
+        if (strlen($digits) <= 4) {
+            return '****';
+        }
+        return str_repeat('*', max(0, strlen($digits) - 4)).substr($digits, -4);
     }
 
     private function distanceKm(float $fromLat, float $fromLng, float $toLat, float $toLng): float

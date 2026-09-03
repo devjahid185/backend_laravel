@@ -8,9 +8,17 @@ class MedicineOrder extends Model
 {
     protected $guarded = [];
 
+    protected $hidden = [
+        'delivery_otp',
+        'delivery_otp_send_error',
+    ];
+
     protected $casts = [
         'accepted_at' => 'datetime',
         'delivered_at' => 'datetime',
+        'delivery_otp_sent_at' => 'datetime',
+        'delivery_otp_expires_at' => 'datetime',
+        'delivery_otp_send_failed_at' => 'datetime',
     ];
 
     public function items()
