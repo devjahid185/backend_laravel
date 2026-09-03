@@ -266,7 +266,11 @@ class MedicineDeliveryController extends Controller
 
     public function orders(Request $request): JsonResponse
     {
-        $orders = MedicineOrder::query()->with('items')->where('user_id', $request->user()->id)->latest()->paginate(20);
+        $orders = MedicineOrder::query()
+            ->with('items', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
+            ->where('user_id', $request->user()->id)
+            ->latest()
+            ->paginate(20);
         $orders->setCollection($orders->getCollection()->map(fn (MedicineOrder $order) => $this->decorateOrder($order)));
         return response()->json($orders);
     }
@@ -274,7 +278,10 @@ class MedicineDeliveryController extends Controller
     public function order(Request $request, int $id): JsonResponse
     {
         return response()->json($this->decorateOrder(
-            MedicineOrder::query()->with('items')->where('user_id', $request->user()->id)->findOrFail($id)
+            MedicineOrder::query()
+                ->with('items', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
+                ->where('user_id', $request->user()->id)
+                ->findOrFail($id)
         ));
     }
 
@@ -286,7 +293,7 @@ class MedicineDeliveryController extends Controller
         ]);
 
         $order = MedicineOrder::query()
-            ->with('items')
+            ->with('items', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
             ->where('user_id', $request->user()->id)
             ->whereIn('payment_method', ['manual_bkash', 'manual_nagad'])
             ->findOrFail($id);
@@ -665,6 +672,20 @@ class MedicineDeliveryController extends Controller
     private function decorateOrder(MedicineOrder $order): MedicineOrder
     {
         $order->service_type = 'medicine';
+        $settings = FoodDeliverySetting::current();
+        $pickupLat = $settings->store_lat !== null
+            ? (float) $settings->store_lat
+            : ($settings->municipality_center_lat !== null ? (float) $settings->municipality_center_lat : null);
+        $pickupLng = $settings->store_lng !== null
+            ? (float) $settings->store_lng
+            : ($settings->municipality_center_lng !== null ? (float) $settings->municipality_center_lng : null);
+        $order->restaurant = [
+            'name' => 'Medicine Store',
+            'phone' => config('app.name'),
+            'address' => 'Medicine pickup point',
+            'lat' => $pickupLat,
+            'lng' => $pickupLng,
+        ];
         $path = $order->payment_proof_photo;
         $order->payment_proof_photo_url = $path ? asset('storage/'.$path) : null;
         $order->delivery_proof_photo_url = $order->delivery_proof_photo ? asset('storage/'.$order->delivery_proof_photo) : null;
