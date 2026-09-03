@@ -641,6 +641,7 @@ class MedicineDeliveryController extends Controller
 
     private function beginBkashPayment(MedicineOrder $order): MedicineOrder
     {
+        $order = MedicineOrder::query()->whereKey($order->id)->firstOrFail();
         $settings = MedicinePaymentSetting::current();
         abort_unless($settings->bkash_tokenized_enabled && $settings->hasBkashTokenizedCredentials(), 422, 'bKash checkout is currently unavailable.');
 
