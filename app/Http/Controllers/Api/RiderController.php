@@ -221,7 +221,7 @@ class RiderController extends Controller
             ->map(fn (MedicineOrder $order) => $this->decorateRiderOrder($order, 'medicine'));
 
         return response()->json([
-            'data' => $foodOrders->merge($medicineOrders)->sortByDesc('created_at')->values(),
+            'data' => $foodOrders->toBase()->merge($medicineOrders->toBase())->sortByDesc('created_at')->values(),
         ]);
     }
 
@@ -508,7 +508,8 @@ class RiderController extends Controller
                 $query->where('food_order_id', $id)->orWhere('medicine_order_id', $id);
             });
         }
-        $requestRow = $requestQuery->firstOrFail();
+        $requestRow = $requestQuery->first();
+        abort_unless($requestRow, 422, 'এই ডেলিভারি রিকোয়েস্ট আর পাওয়া যাচ্ছে না। নতুন করে রিফ্রেশ করুন।');
         $serviceType = $requestRow->medicine_order_id ? 'medicine' : 'food';
         $orderQuery = $serviceType === 'medicine'
             ? MedicineOrder::query()->with('items')->where('id', $requestRow->medicine_order_id)
