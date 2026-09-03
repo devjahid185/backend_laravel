@@ -190,9 +190,31 @@ class RiderController extends Controller
             'lat' => ['required', 'numeric', 'between:-90,90'],
             'lng' => ['required', 'numeric', 'between:-180,180'],
             'accuracy' => ['nullable', 'numeric', 'min:0'],
-            'food_order_id' => ['nullable', 'exists:food_orders,id'],
-            'medicine_order_id' => ['nullable', 'exists:medicine_orders,id'],
+            'food_order_id' => ['nullable', 'integer'],
+            'medicine_order_id' => ['nullable', 'integer'],
         ]);
+        if (! empty($data['food_order_id'])) {
+            $foodOrderExists = FoodOrder::query()
+                ->whereKey($data['food_order_id'])
+                ->where('rider_id', $rider->id)
+                ->exists();
+            if (! $foodOrderExists) {
+                $medicineOrderExists = MedicineOrder::query()
+                    ->whereKey($data['food_order_id'])
+                    ->where('rider_id', $rider->id)
+                    ->exists();
+                abort_unless($medicineOrderExists, 422, 'চলমান ডেলিভারি অর্ডার পাওয়া যায়নি।');
+                $data['medicine_order_id'] = $data['food_order_id'];
+                unset($data['food_order_id']);
+            }
+        }
+        if (! empty($data['medicine_order_id'])) {
+            $medicineOrderExists = MedicineOrder::query()
+                ->whereKey($data['medicine_order_id'])
+                ->where('rider_id', $rider->id)
+                ->exists();
+            abort_unless($medicineOrderExists, 422, 'চলমান মেডিসিন ডেলিভারি পাওয়া যায়নি।');
+        }
         RiderLocation::query()->create($data + ['rider_id' => $rider->id]);
         $rider->update([
             'last_lat' => $data['lat'],
