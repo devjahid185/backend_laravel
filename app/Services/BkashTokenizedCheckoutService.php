@@ -13,7 +13,7 @@ class BkashTokenizedCheckoutService
     public function createPayment(MedicineOrder $order, MedicinePaymentSetting $settings): array
     {
         $token = $this->grantToken($settings);
-        $callbackUrl = $settings->bkash_tokenized_callback_url ?: url('/api/medicine/bkash/callback');
+        $callbackUrl = url('/api/medicine/bkash/callback');
         $response = Http::withHeaders($this->authorizedHeaders($settings, $token))
             ->post($settings->bkashBaseUrl().'/create', [
                 'mode' => '0011',
