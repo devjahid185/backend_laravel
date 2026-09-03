@@ -343,14 +343,19 @@ class AdminResourceController extends Controller
     public function deliveryIncomeSummary(Request $request): JsonResponse
     {
         $settings = FoodDeliverySetting::current();
-        $foodQuery = FoodOrder::query()->with('restaurant:id,commission_enabled,commission_type,commission_rate,commission_fixed_fee');
+        $service = $request->query('service');
+        $foodQuery = FoodOrder::query()->with('restaurant:id,name,commission_enabled,commission_type,commission_rate,commission_fixed_fee', 'rider:id,name,phone');
         $this->applyFoodOrderFilters($foodQuery, $request);
-        $medicineQuery = MedicineOrder::query();
+        $medicineQuery = MedicineOrder::query()->with('rider:id,name,phone');
         $this->applyDeliveryOrderFilters($medicineQuery, $request, false);
 
         $foodOrders = $foodQuery->get();
         $medicineOrders = $medicineQuery->get();
-        $allOrders = $foodOrders->concat($medicineOrders);
+        $allOrders = match ($service) {
+            'food' => $foodOrders,
+            'medicine' => $medicineOrders,
+            default => $foodOrders->concat($medicineOrders),
+        };
         $food = $this->deliveryFinancialTotals($foodOrders, $settings);
         $medicine = $this->deliveryFinancialTotals($medicineOrders, $settings);
         $totals = $this->deliveryFinancialTotals($allOrders, $settings);
@@ -363,6 +368,42 @@ class AdminResourceController extends Controller
                 ...$this->deliveryFinancialTotals($rows, $settings),
             ])
             ->values();
+        $statusRows = $allOrders
+            ->groupBy('status')
+            ->map(fn ($rows, $status) => [
+                'status' => $status ?: 'unknown',
+                'orders_count' => $rows->count(),
+                'grand_total' => round((float) $rows->sum('grand_total'), 2),
+                ...$this->deliveryFinancialTotals($rows, $settings),
+            ])
+            ->values();
+        $riderRows = $allOrders
+            ->whereNotNull('rider_id')
+            ->groupBy('rider_id')
+            ->map(function ($rows) use ($settings) {
+                $first = $rows->first();
+                return [
+                    'rider_id' => $first->rider_id,
+                    'rider_name' => $first->rider?->name ?: 'Rider #'.$first->rider_id,
+                    'rider_phone' => $first->rider?->phone,
+                    'orders_count' => $rows->count(),
+                    'cash_collected_total' => round((float) $rows->sum('cash_collected'), 2),
+                    'grand_total' => round((float) $rows->sum('grand_total'), 2),
+                    ...$this->deliveryFinancialTotals($rows, $settings),
+                ];
+            })
+            ->sortByDesc('rider_payout_total')
+            ->values();
+        $dailyRows = $allOrders
+            ->groupBy(fn ($order) => optional($order->created_at)->format('Y-m-d') ?: 'unknown')
+            ->map(fn ($rows, $date) => [
+                'date' => $date,
+                'orders_count' => $rows->count(),
+                'grand_total' => round((float) $rows->sum('grand_total'), 2),
+                ...$this->deliveryFinancialTotals($rows, $settings),
+            ])
+            ->sortBy('date')
+            ->values();
 
         return response()->json([
             'totals' => $totals + [
@@ -370,18 +411,22 @@ class AdminResourceController extends Controller
                 'delivered_orders_count' => $allOrders->where('status', 'delivered')->count(),
                 'grand_total' => round((float) $allOrders->sum('grand_total'), 2),
                 'cash_collected_total' => round((float) $allOrders->sum('cash_collected'), 2),
+                'unassigned_orders_count' => $allOrders->whereNull('rider_id')->count(),
+                'unpaid_orders_count' => $allOrders->where('payment_status', 'unpaid')->count(),
             ],
             'by_service' => [
                 [
                     'service_type' => 'food',
                     'orders_count' => $foodOrders->count(),
                     'delivered_orders_count' => $foodOrders->where('status', 'delivered')->count(),
+                    'grand_total' => round((float) $foodOrders->sum('grand_total'), 2),
                     ...$food,
                 ],
                 [
                     'service_type' => 'medicine',
                     'orders_count' => $medicineOrders->count(),
                     'delivered_orders_count' => $medicineOrders->where('status', 'delivered')->count(),
+                    'grand_total' => round((float) $medicineOrders->sum('grand_total'), 2),
                     ...$medicine,
                 ],
             ],
@@ -392,6 +437,9 @@ class AdminResourceController extends Controller
                 'rider_per_km_earning' => (float) ($settings->rider_per_km_earning ?? $settings->municipality_extra_per_km_charge ?? 15),
             ],
             'by_method' => $methodRows,
+            'by_status' => $statusRows,
+            'by_rider' => $riderRows,
+            'daily' => $dailyRows,
         ]);
     }
 
