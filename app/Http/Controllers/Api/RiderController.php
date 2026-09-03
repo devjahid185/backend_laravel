@@ -191,6 +191,7 @@ class RiderController extends Controller
             'lng' => ['required', 'numeric', 'between:-180,180'],
             'accuracy' => ['nullable', 'numeric', 'min:0'],
             'food_order_id' => ['nullable', 'exists:food_orders,id'],
+            'medicine_order_id' => ['nullable', 'exists:medicine_orders,id'],
         ]);
         RiderLocation::query()->create($data + ['rider_id' => $rider->id]);
         $rider->update([
