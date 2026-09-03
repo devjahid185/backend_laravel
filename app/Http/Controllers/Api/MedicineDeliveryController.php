@@ -14,6 +14,7 @@ use App\Models\MedicineOrderItem;
 use App\Models\MedicinePaymentSetting;
 use App\Models\Rider;
 use App\Models\RiderOrderRequest;
+use App\Services\BkashTokenizedCheckoutService;
 use App\Services\FcmService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -182,7 +183,7 @@ class MedicineDeliveryController extends Controller
             'delivery_lat' => ['required', 'numeric', 'between:-90,90'],
             'delivery_lng' => ['required', 'numeric', 'between:-180,180'],
             'delivery_map_url' => ['nullable', 'string', 'max:255'],
-            'payment_method' => ['nullable', 'in:cash_on_delivery,manual_bkash,manual_nagad,online'],
+            'payment_method' => ['nullable', 'in:cash_on_delivery,manual_bkash,manual_nagad,online,bkash_tokenized'],
             'manual_transaction_id' => ['nullable', 'string', 'max:120'],
             'payment_proof_photo' => ['nullable', 'file', 'image', 'max:4096'],
             'order_note' => ['nullable', 'string', 'max:1000'],
@@ -259,6 +260,10 @@ class MedicineDeliveryController extends Controller
             return $this->decorateOrder($order->load('items'));
         });
 
+        if ($paymentMethod === 'bkash_tokenized') {
+            $order = $this->beginBkashPayment($order);
+        }
+
         $this->dispatchOrderToNearbyRiders($order);
 
         return response()->json(['message' => 'Order placed', 'order' => $order], 201);
@@ -308,6 +313,98 @@ class MedicineDeliveryController extends Controller
         return response()->json([
             'message' => 'Payment information submitted for verification.',
             'order' => $this->decorateOrder($order),
+        ]);
+    }
+
+    public function createBkashPayment(Request $request, int $id): JsonResponse
+    {
+        $order = MedicineOrder::query()
+            ->with('items', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
+            ->where('user_id', $request->user()->id)
+            ->where('payment_method', 'bkash_tokenized')
+            ->findOrFail($id);
+        if ($order->payment_status === 'paid') {
+            return response()->json([
+                'message' => 'bKash payment already completed.',
+                'order' => $this->decorateOrder($order),
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'bKash payment URL created.',
+            'order' => $this->beginBkashPayment($order),
+        ]);
+    }
+
+    public function executeBkashPayment(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate([
+            'payment_id' => ['nullable', 'string', 'max:120'],
+            'transaction_id' => ['nullable', 'string', 'max:120'],
+        ]);
+
+        $order = MedicineOrder::query()
+            ->with('items', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
+            ->where('user_id', $request->user()->id)
+            ->where('payment_method', 'bkash_tokenized')
+            ->findOrFail($id);
+        if ($order->payment_status === 'paid') {
+            return response()->json([
+                'message' => 'bKash payment already completed.',
+                'order' => $this->decorateOrder($order),
+            ]);
+        }
+
+        $settings = MedicinePaymentSetting::current();
+        abort_unless($settings->bkash_tokenized_enabled && $settings->hasBkashTokenizedCredentials(), 422, 'bKash checkout is currently unavailable.');
+
+        $payload = app(BkashTokenizedCheckoutService::class)->executePayment($order, $settings, $data['payment_id'] ?? null);
+        $this->applyBkashPaymentResult($order, $payload, $data['transaction_id'] ?? null);
+
+        return response()->json([
+            'message' => $order->payment_status === 'paid' ? 'bKash payment completed.' : 'bKash payment is not completed yet.',
+            'order' => $this->decorateOrder($order->fresh()->load('items', 'rider:id,name,phone,last_lat,last_lng,last_location_at')),
+            'bkash' => $payload,
+        ]);
+    }
+
+    public function bkashCallback(Request $request): JsonResponse
+    {
+        $paymentId = $request->query('paymentID') ?: $request->input('paymentID');
+        $status = $request->query('status') ?: $request->input('status');
+        $order = $paymentId
+            ? MedicineOrder::query()->where('bkash_payment_id', $paymentId)->first()
+            : null;
+
+        if (! $order) {
+            Log::warning('bKash callback order not found', $request->all());
+            return response()->json(['message' => 'bKash payment order not found.'], 404);
+        }
+
+        if (strtolower((string) $status) === 'success') {
+            try {
+                $settings = MedicinePaymentSetting::current();
+                $payload = app(BkashTokenizedCheckoutService::class)->executePayment($order, $settings, $paymentId);
+                $this->applyBkashPaymentResult($order, $payload);
+            } catch (\Throwable $e) {
+                Log::error('bKash callback execute failed', [
+                    'order_id' => $order->id,
+                    'payment_id' => $paymentId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        } else {
+            $order->forceFill([
+                'bkash_status' => $status ?: 'Cancelled',
+                'bkash_raw' => $request->all(),
+            ])->save();
+        }
+
+        return response()->json([
+            'message' => $order->fresh()->payment_status === 'paid'
+                ? 'bKash payment completed. You can return to the app.'
+                : 'bKash payment was not completed.',
+            'payment_status' => $order->fresh()->payment_status,
         ]);
     }
 
@@ -542,6 +639,38 @@ class MedicineDeliveryController extends Controller
         return collect($settings->paymentOptions())->contains('method', $method);
     }
 
+    private function beginBkashPayment(MedicineOrder $order): MedicineOrder
+    {
+        $settings = MedicinePaymentSetting::current();
+        abort_unless($settings->bkash_tokenized_enabled && $settings->hasBkashTokenizedCredentials(), 422, 'bKash checkout is currently unavailable.');
+
+        $payload = app(BkashTokenizedCheckoutService::class)->createPayment($order, $settings);
+        $order->forceFill([
+            'bkash_payment_id' => $payload['paymentID'],
+            'bkash_url' => $payload['bkashURL'],
+            'bkash_status' => $payload['transactionStatus'] ?? 'Created',
+            'bkash_raw' => $payload,
+        ])->save();
+
+        return $this->decorateOrder($order->fresh()->load('items', 'rider:id,name,phone,last_lat,last_lng,last_location_at'));
+    }
+
+    private function applyBkashPaymentResult(MedicineOrder $order, array $payload, ?string $transactionId = null): void
+    {
+        $transactionStatus = $payload['transactionStatus'] ?? $payload['status'] ?? null;
+        $trxId = $transactionId ?: ($payload['trxID'] ?? $payload['trxId'] ?? null);
+        $isPaid = strtolower((string) $transactionStatus) === 'completed' || filled($trxId);
+
+        $order->forceFill([
+            'bkash_status' => $transactionStatus ?: ($isPaid ? 'Completed' : 'Pending'),
+            'bkash_trx_id' => $trxId,
+            'manual_transaction_id' => $trxId ?: $order->manual_transaction_id,
+            'bkash_raw' => $payload,
+            'payment_status' => $isPaid ? 'paid' : $order->payment_status,
+            'bkash_paid_at' => $isPaid ? now() : $order->bkash_paid_at,
+        ])->save();
+    }
+
     private function dispatchOrderToNearbyRiders(MedicineOrder $order): void
     {
         if ($order->rider_id) {
@@ -689,6 +818,7 @@ class MedicineDeliveryController extends Controller
         $path = $order->payment_proof_photo;
         $order->payment_proof_photo_url = $path ? asset('storage/'.$path) : null;
         $order->delivery_proof_photo_url = $order->delivery_proof_photo ? asset('storage/'.$order->delivery_proof_photo) : null;
+        $order->bkash_url = $order->payment_method === 'bkash_tokenized' ? $order->bkash_url : null;
         $order->rider_assignment_status = $order->rider_id ? 'accepted' : 'not_accepted';
         $order->rider_assignment_label = $order->rider_id ? 'Rider accepted' : 'Waiting for rider';
         $order->payment_options = $this->paymentOptions();

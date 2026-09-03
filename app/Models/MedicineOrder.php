@@ -19,6 +19,8 @@ class MedicineOrder extends Model
         'delivery_otp_sent_at' => 'datetime',
         'delivery_otp_expires_at' => 'datetime',
         'delivery_otp_send_failed_at' => 'datetime',
+        'bkash_raw' => 'array',
+        'bkash_paid_at' => 'datetime',
     ];
 
     public function items()

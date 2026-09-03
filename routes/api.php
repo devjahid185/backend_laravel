@@ -79,6 +79,7 @@ Route::get('/home-service-shortcuts', [HomeServiceShortcutController::class, 'ac
 Route::get('/support-settings', [SupportSettingController::class, 'show']);
 Route::get('/map-settings', [MapSettingController::class, 'show']);
 Route::get('/app-version-check', [AppVersionController::class, 'check']);
+Route::match(['GET', 'POST'], '/medicine/bkash/callback', [MedicineDeliveryController::class, 'bkashCallback']);
 
 Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::get('/admin/me', [AdminAuthController::class, 'me']);
@@ -374,6 +375,8 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
         Route::post('/checkout', [MedicineDeliveryController::class, 'checkout']);
         Route::get('/orders', [MedicineDeliveryController::class, 'orders']);
         Route::post('/orders/{id}/payment-proof', [MedicineDeliveryController::class, 'updateOrderPaymentProof'])->whereNumber('id');
+        Route::post('/orders/{id}/bkash/create', [MedicineDeliveryController::class, 'createBkashPayment'])->whereNumber('id');
+        Route::post('/orders/{id}/bkash/execute', [MedicineDeliveryController::class, 'executeBkashPayment'])->whereNumber('id');
         Route::get('/orders/{id}', [MedicineDeliveryController::class, 'order'])->whereNumber('id');
     });
 
