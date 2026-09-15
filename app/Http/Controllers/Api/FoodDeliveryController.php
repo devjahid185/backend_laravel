@@ -1335,58 +1335,62 @@ class FoodDeliveryController extends Controller
         $restaurant = $order->restaurant;
         $originLat = $restaurant?->lat !== null ? (float) $restaurant->lat : null;
         $originLng = $restaurant?->lng !== null ? (float) $restaurant->lng : null;
-        if ($originLat === null || $originLng === null) {
-            Log::info('Rider dispatch skipped: restaurant location missing', ['order_id' => $order->id]);
-            return;
-        }
-
-        $radiusKm = 20.0;
         $riders = Rider::query()
             ->where('kyc_status', 'approved')
             ->where('account_status', 'active')
             ->where('agreement_accepted', true)
-            ->where('availability_status', 'online')
-            ->whereNotNull('last_lat')
-            ->whereNotNull('last_lng')
-            ->where(function ($query): void {
-                $query->whereNull('last_location_at')->orWhere('last_location_at', '>=', now()->subMinutes(30));
-            })
             ->get()
             ->map(function (Rider $rider) use ($originLat, $originLng): Rider {
-                $rider->dispatch_distance_km = $this->distanceKm($originLat, $originLng, (float) $rider->last_lat, (float) $rider->last_lng);
+                $rider->dispatch_distance_km = $originLat !== null
+                    && $originLng !== null
+                    && $rider->last_lat !== null
+                    && $rider->last_lng !== null
+                        ? $this->distanceKm($originLat, $originLng, (float) $rider->last_lat, (float) $rider->last_lng)
+                        : null;
                 return $rider;
             })
-            ->filter(fn (Rider $rider) => $rider->dispatch_distance_km <= $radiusKm)
-            ->sortBy('dispatch_distance_km')
+            ->sortBy(fn (Rider $rider) => $rider->dispatch_distance_km ?? PHP_FLOAT_MAX)
             ->values();
 
         if ($riders->isEmpty()) {
-            Log::info('Rider dispatch skipped: no nearby online riders', ['order_id' => $order->id]);
+            Log::info('Rider dispatch skipped: no approved riders', ['order_id' => $order->id]);
             return;
         }
 
+        $notifyRiderIds = [];
         foreach ($riders as $rider) {
+            $existing = RiderOrderRequest::query()
+                ->where('food_order_id', $order->id)
+                ->where('rider_id', $rider->id)
+                ->first();
+
             RiderOrderRequest::query()->updateOrCreate(
                 ['food_order_id' => $order->id, 'rider_id' => $rider->id],
                 [
-                    'distance_km' => round((float) $rider->dispatch_distance_km, 2),
+                    'distance_km' => $rider->dispatch_distance_km === null
+                        ? null
+                        : round((float) $rider->dispatch_distance_km, 2),
                     'restaurant_lat' => $originLat,
                     'restaurant_lng' => $originLng,
                     'status' => 'pending',
                     'notified_at' => now(),
-                    'expires_at' => now()->addMinutes(15),
+                    'expires_at' => null,
                     'reject_reason' => null,
                 ]
             );
+
+            if (! $existing || $existing->status !== 'pending') {
+                $notifyRiderIds[] = $rider->id;
+            }
         }
 
         Log::info('Rider dispatch requests created', [
             'order_id' => $order->id,
             'rider_count' => $riders->count(),
-            'radius_km' => $radiusKm,
+            'broadcast' => true,
         ]);
 
-        $this->notifyRidersForOrder($order, $riders->pluck('id')->all());
+        $this->notifyRidersForOrder($order, $notifyRiderIds);
     }
 
     private function notifyRidersForOrder(FoodOrder $order, array $riderIds): void
