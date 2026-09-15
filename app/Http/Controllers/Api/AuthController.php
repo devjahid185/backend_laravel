@@ -28,7 +28,6 @@ class AuthController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'phone' => ['required', 'string', 'max:20', 'unique:users,phone'],
             'email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:6'],
             'district' => ['nullable', 'string', 'max:255'],
             'upazila' => ['nullable', 'string', 'max:255'],
             'union_name' => ['nullable', 'string', 'max:255'],
@@ -36,7 +35,10 @@ class AuthController extends Controller
             'role' => ['nullable', 'in:user,worker,admin,business'],
         ]);
 
-        $user = User::query()->create($validated);
+        $user = User::query()->create($validated + [
+            'password' => Hash::make(Str::random(40)),
+            'verified' => true,
+        ]);
         $token = $user->createToken($this->deviceTokenName($request))->plainTextToken;
         $this->sendWelcomeEmail($user, $email);
 
@@ -59,15 +61,9 @@ class AuthController extends Controller
         }
 
         $userExists = User::query()->where('phone', $validated['phone'])->exists();
-        if (in_array($validated['purpose'], ['reset', 'login', 'password_change'], true) && ! $userExists) {
+        if (in_array($validated['purpose'], ['reset', 'password_change'], true) && ! $userExists) {
             throw ValidationException::withMessages([
                 'phone' => ['No account found with this phone number.'],
-            ]);
-        }
-
-        if ($validated['purpose'] === 'register' && $userExists) {
-            throw ValidationException::withMessages([
-                'phone' => ['This phone number is already registered.'],
             ]);
         }
 
@@ -156,6 +152,10 @@ class AuthController extends Controller
             return response()->json(['message' => 'Unauthorized.'], 401);
         }
 
+        if (in_array($validated['purpose'], ['login', 'register'], true)) {
+            return $this->completeOtpAuth($request, $validated);
+        }
+
         $otp = in_array($validated['purpose'], ['reset', 'password_change'], true)
             ? $this->verifyOtpWithoutConsuming($validated['phone'], $validated['purpose'], $validated['otp'])
             : $this->consumeOtp($validated['phone'], $validated['purpose'], $validated['otp']);
@@ -172,18 +172,20 @@ class AuthController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'phone' => ['required', 'string', 'max:20', 'unique:users,phone'],
             'email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:6'],
             'district' => ['nullable', 'string', 'max:255'],
             'upazila' => ['nullable', 'string', 'max:255'],
             'otp' => ['required', 'string', 'size:6'],
+            'purpose' => ['nullable', 'in:register,login'],
         ]);
 
-        $this->consumeOtp($validated['phone'], 'register', $validated['otp']);
+        $this->consumeOtp($validated['phone'], $validated['purpose'] ?? 'register', $validated['otp']);
         unset($validated['otp']);
+        unset($validated['purpose']);
 
         $user = User::query()->create([
             ...$validated,
-            'password' => Hash::make($validated['password']),
+            'password' => Hash::make(Str::random(40)),
+            'verified' => true,
         ]);
 
         $token = $user->createToken($this->deviceTokenName($request))->plainTextToken;
@@ -306,24 +308,22 @@ class AuthController extends Controller
         ]);
     }
 
-    public function login(Request $request): JsonResponse
+    private function completeOtpAuth(Request $request, array $validated): JsonResponse
     {
-        $validated = $request->validate([
-            'phone' => ['required_without:email', 'string', 'max:20'],
-            'email' => ['required_without:phone', 'email', 'max:255'],
-            'password' => ['required', 'string'],
-        ]);
+        $user = User::query()->where('phone', $validated['phone'])->first();
+        if (! $user) {
+            $this->verifyOtpWithoutConsuming($validated['phone'], $validated['purpose'], $validated['otp']);
 
-        $user = User::query()
-            ->when($request->filled('phone'), fn ($q) => $q->where('phone', $validated['phone']))
-            ->when($request->filled('email'), fn ($q) => $q->where('email', $validated['email']))
-            ->first();
-
-        if (! $user || ! Hash::check($validated['password'], $user->password)) {
-            throw ValidationException::withMessages([
-                'credentials' => ['Invalid credentials.'],
+            return response()->json([
+                'message' => 'OTP verified. Complete registration.',
+                'needs_registration' => true,
+                'phone' => $validated['phone'],
+                'purpose' => $validated['purpose'],
+                'verified_at' => now(),
             ]);
         }
+
+        $otp = $this->consumeOtp($validated['phone'], $validated['purpose'], $validated['otp']);
 
         if ($user->is_blocked) {
             return response()->json(['message' => 'Your account is blocked.'], 403);
@@ -335,7 +335,16 @@ class AuthController extends Controller
             'message' => 'Login successful',
             'token' => $token,
             'user' => $user,
+            'needs_registration' => false,
+            'verified_at' => $otp->consumed_at,
         ]);
+    }
+
+    public function login(Request $request): JsonResponse
+    {
+        return response()->json([
+            'message' => 'Password login is disabled. Please login with mobile OTP.',
+        ], 410);
     }
 
     public function loginGoogle(Request $request): JsonResponse
