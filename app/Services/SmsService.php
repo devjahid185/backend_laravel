@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\SmsSetting;
+use App\Models\SmsLog;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
@@ -11,39 +12,68 @@ class SmsService
     public function sendOtp(string $phone, string $otp): void
     {
         $message = "ভোলাবাসী OTP: {$otp}. ৫ মিনিটের মধ্যে ব্যবহার করুন। কাউকে শেয়ার করবেন না।";
-        $this->send($phone, $message);
+        $this->send($phone, $message, 'otp');
     }
 
-    public function send(string $phone, string $message): void
+    public function send(string $phone, string $message, string $purpose = 'manual'): void
     {
         $settings = SmsSetting::current();
+        $normalizedPhone = $this->normalizeBangladeshPhone($phone);
+        $log = SmsLog::query()->create([
+            'phone' => $this->maskPhone($normalizedPhone),
+            'message' => $message,
+            'purpose' => $purpose,
+            'provider' => $settings->provider,
+            'sender_id' => $settings->sender_id,
+            'api_url' => $settings->api_url ?: 'https://sms.mram.com.bd/smsapi',
+            'status' => 'pending',
+        ]);
 
         if (! $settings->is_enabled) {
+            $this->failLog($log, 'SMS sending is disabled.');
             throw new \RuntimeException('SMS sending is disabled.');
         }
 
         $apiKey = $settings->safeApiKey();
         if (! $apiKey || ! $settings->sender_id) {
+            $this->failLog($log, 'SMS service not configured.');
             throw new \RuntimeException('SMS service not configured.');
         }
 
-        $response = Http::get($settings->api_url ?: 'https://sms.mram.com.bd/smsapi', [
+        $payload = [
             'api_key' => $apiKey,
             'type' => $settings->message_type ?: 'unicode',
-            'contacts' => $this->normalizeBangladeshPhone($phone),
+            'contacts' => $normalizedPhone,
             'senderid' => $settings->sender_id,
             'msg' => $message,
             'label' => $settings->label ?: 'transactional',
+        ];
+        $log->update([
+            'request_payload' => [
+                ...$payload,
+                'api_key' => $settings->maskedApiKey(),
+            ],
         ]);
 
+        $response = Http::timeout(20)->get($settings->api_url ?: 'https://sms.mram.com.bd/smsapi', $payload);
+        $body = trim((string) $response->body());
+
         if (! $response->ok()) {
+            $this->failLog($log, 'SMS gateway error: HTTP '.$response->status(), $response->status(), $body);
             throw new \RuntimeException('SMS gateway error: HTTP '.$response->status());
         }
 
-        $body = trim((string) $response->body());
         if ($this->isErrorResponse($body)) {
+            $this->failLog($log, 'SMS gateway rejected request: '.$body, $response->status(), $body);
             throw new \RuntimeException('SMS gateway rejected request: '.$body);
         }
+
+        $log->update([
+            'status' => 'sent',
+            'http_status' => $response->status(),
+            'gateway_response' => $body,
+            'sent_at' => now(),
+        ]);
     }
 
     private function normalizeBangladeshPhone(string $phone): string
@@ -60,6 +90,26 @@ class SmsService
         }
 
         return $phone;
+    }
+
+    private function failLog(SmsLog $log, string $error, ?int $httpStatus = null, ?string $response = null): void
+    {
+        $log->update([
+            'status' => 'failed',
+            'http_status' => $httpStatus,
+            'gateway_response' => $response,
+            'error_message' => $error,
+        ]);
+    }
+
+    private function maskPhone(string $phone): string
+    {
+        $digits = preg_replace('/\D+/', '', $phone);
+        if (strlen($digits) <= 4) {
+            return $digits;
+        }
+
+        return substr($digits, 0, 2).str_repeat('*', max(0, strlen($digits) - 4)).substr($digits, -2);
     }
 
     private function isErrorResponse(string $body): bool
