@@ -11,7 +11,7 @@ class SmsService
 {
     public function sendOtp(string $phone, string $otp): void
     {
-        $message = "ভোলাবাসী OTP: {$otp}. ৫ মিনিটের মধ্যে ব্যবহার করুন। কাউকে শেয়ার করবেন না।";
+        $message = "Bholavashi OTP: {$otp}. Valid for 5 minutes. Do not share this code.";
         $this->send($phone, $message, 'otp');
     }
 
