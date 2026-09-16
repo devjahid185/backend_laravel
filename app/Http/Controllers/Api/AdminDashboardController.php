@@ -132,6 +132,7 @@ class AdminDashboardController extends Controller
             'riders_busy' => Rider::query()->where('availability_status', 'busy')->count(),
             'riders_kyc_pending' => Rider::query()->where('kyc_status', 'pending')->count(),
             'riders_suspended' => Rider::query()->whereIn('account_status', ['suspended', 'blocked'])->count(),
+            'rider_requests' => RiderOrderRequest::query()->count(),
             'rider_requests_pending' => RiderOrderRequest::query()->where('status', 'pending')->count(),
             'rider_requests_today' => RiderOrderRequest::query()->where('created_at', '>=', $today)->count(),
             'rider_wallet_balance' => (float) Rider::query()->sum('wallet_balance'),
