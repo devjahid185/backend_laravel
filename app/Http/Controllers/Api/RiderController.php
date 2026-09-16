@@ -278,7 +278,6 @@ class RiderController extends Controller
             $order->update($payload);
             $requestRow->update(['status' => 'accepted', 'responded_at' => now()]);
             RiderOrderRequest::query()
-                ->where('rider_id', $rider->id)
                 ->where($serviceType === 'medicine' ? 'medicine_order_id' : 'food_order_id', $order->id)
                 ->where('id', '!=', $requestRow->id)
                 ->where('status', 'pending')
@@ -459,7 +458,10 @@ class RiderController extends Controller
             ->whereIn('id', RiderOrderRequest::query()
                 ->select('medicine_order_id')
                 ->where('rider_id', $rider->id)
-                ->where('status', 'pending'))
+                ->where('status', 'pending')
+                ->where(function ($query): void {
+                    $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
+                }))
             ->whereNull('rider_id')
             ->whereIn('status', ['pending', 'accepted', 'preparing'])
             ->latest()
