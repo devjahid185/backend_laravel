@@ -115,10 +115,10 @@ class AdminDashboardController extends Controller
             'medicine_items_promoted' => MedicineItem::query()->where('is_promoted', true)->count(),
             'medicine_prescription_required' => MedicineItem::query()->where('prescription_required', true)->count(),
             'medicine_carts' => MedicineCart::query()->count(),
-            'medicine_orders' => MedicineOrder::query()->count(),
-            'medicine_orders_today' => MedicineOrder::query()->where('created_at', '>=', $today)->count(),
-            'medicine_orders_week' => MedicineOrder::query()->where('created_at', '>=', $weekStart)->count(),
-            'medicine_orders_month' => MedicineOrder::query()->where('created_at', '>=', $monthStart)->count(),
+            'medicine_orders' => MedicineOrder::query()->where('status', '!=', 'payment_pending')->count(),
+            'medicine_orders_today' => MedicineOrder::query()->where('status', '!=', 'payment_pending')->where('created_at', '>=', $today)->count(),
+            'medicine_orders_week' => MedicineOrder::query()->where('status', '!=', 'payment_pending')->where('created_at', '>=', $weekStart)->count(),
+            'medicine_orders_month' => MedicineOrder::query()->where('status', '!=', 'payment_pending')->where('created_at', '>=', $monthStart)->count(),
             'medicine_orders_pending' => MedicineOrder::query()->whereIn('status', ['pending', 'accepted', 'preparing'])->count(),
             'medicine_orders_delivered' => MedicineOrder::query()->where('status', 'delivered')->count(),
             'medicine_orders_cancelled' => MedicineOrder::query()->whereIn('status', ['cancelled', 'rejected'])->count(),
@@ -179,7 +179,7 @@ class AdminDashboardController extends Controller
                 'users' => User::query()->whereDate('created_at', $date)->count(),
                 'messages' => Message::query()->whereDate('created_at', $date)->count(),
                 'orders' => FoodOrder::query()->whereDate('created_at', $date)->count(),
-                'medicine_orders' => MedicineOrder::query()->whereDate('created_at', $date)->count(),
+                'medicine_orders' => MedicineOrder::query()->where('status', '!=', 'payment_pending')->whereDate('created_at', $date)->count(),
                 'revenue' => (float) FoodOrder::query()->where('status', 'delivered')->whereDate('created_at', $date)->sum('grand_total')
                     + (float) MedicineOrder::query()->where('status', 'delivered')->whereDate('created_at', $date)->sum('grand_total'),
             ];
@@ -195,7 +195,7 @@ class AdminDashboardController extends Controller
                 'visits' => AppVisitLog::query()->whereBetween('visited_at', [$start, $end])->count(),
                 'users' => User::query()->whereBetween('created_at', [$start, $end])->count(),
                 'orders' => FoodOrder::query()->whereBetween('created_at', [$start, $end])->count(),
-                'medicine_orders' => MedicineOrder::query()->whereBetween('created_at', [$start, $end])->count(),
+                'medicine_orders' => MedicineOrder::query()->where('status', '!=', 'payment_pending')->whereBetween('created_at', [$start, $end])->count(),
                 'revenue' => (float) FoodOrder::query()->where('status', 'delivered')->whereBetween('created_at', [$start, $end])->sum('grand_total')
                     + (float) MedicineOrder::query()->where('status', 'delivered')->whereBetween('created_at', [$start, $end])->sum('grand_total'),
             ];
@@ -221,7 +221,7 @@ class AdminDashboardController extends Controller
 
         $statusBreakdowns = [
             'food_orders' => $this->statusCounts(FoodOrder::query(), 'status'),
-            'medicine_orders' => $this->statusCounts(MedicineOrder::query(), 'status'),
+            'medicine_orders' => $this->statusCounts(MedicineOrder::query()->where('status', '!=', 'payment_pending'), 'status'),
             'riders_by_status' => $this->statusCounts(Rider::query(), 'account_status'),
             'riders_by_availability' => $this->statusCounts(Rider::query(), 'availability_status'),
             'sms' => $this->statusCounts(SmsLog::query(), 'status'),
@@ -252,6 +252,7 @@ class AdminDashboardController extends Controller
                 ->limit(5)
                 ->get(['id', 'order_no', 'status', 'grand_total', 'payment_status', 'created_at']),
             'medicine_orders' => MedicineOrder::query()
+                ->where('status', '!=', 'payment_pending')
                 ->orderByDesc('id')
                 ->limit(5)
                 ->get(['id', 'order_no', 'status', 'grand_total', 'payment_status', 'created_at']),

@@ -215,7 +215,9 @@ class MedicineDeliveryController extends Controller
             ? $request->file('payment_proof_photo')->store('medicine/payment-proofs', 'public')
             : null;
 
-        $order = DB::transaction(function () use ($request, $cart, $data, $itemsTotal, $deliveryFee, $paymentMethod, $proofPhotoPath, $charge) {
+        $isBkashCheckout = $paymentMethod === 'bkash_tokenized';
+
+        $order = DB::transaction(function () use ($request, $cart, $data, $itemsTotal, $deliveryFee, $paymentMethod, $proofPhotoPath, $charge, $isBkashCheckout) {
             $order = MedicineOrder::query()->create([
                 'order_no' => 'MD-' . now()->format('ymd') . '-' . strtoupper(Str::random(6)),
                 'user_id' => $request->user()->id,
@@ -226,7 +228,9 @@ class MedicineDeliveryController extends Controller
                 'delivery_lat' => $data['delivery_lat'] ?? null,
                 'delivery_lng' => $data['delivery_lng'] ?? null,
                 'delivery_map_url' => $data['delivery_map_url'] ?? $this->mapUrl($data['delivery_lat'], $data['delivery_lng']),
+                'status' => $isBkashCheckout ? 'payment_pending' : 'pending',
                 'payment_method' => $paymentMethod,
+                'payment_status' => $isBkashCheckout ? 'pending' : 'unpaid',
                 'manual_transaction_id' => in_array($paymentMethod, ['manual_bkash', 'manual_nagad'], true)
                     ? ($data['manual_transaction_id'] ?? null)
                     : null,
@@ -256,17 +260,23 @@ class MedicineDeliveryController extends Controller
                 ]);
             }
 
-            $cart->items()->delete();
+            if (! $isBkashCheckout) {
+                $cart->items()->delete();
+            }
+
             return $this->decorateOrder($order->load('items'));
         });
 
-        if ($paymentMethod === 'bkash_tokenized') {
+        if ($isBkashCheckout) {
             $order = $this->beginBkashPayment($order);
+        } else {
+            $this->dispatchOrderToNearbyRiders($order);
         }
 
-        $this->dispatchOrderToNearbyRiders($order);
-
-        return response()->json(['message' => 'Order placed', 'order' => $order], 201);
+        return response()->json([
+            'message' => $isBkashCheckout ? 'Payment started' : 'Order placed',
+            'order' => $order,
+        ], 201);
     }
 
     public function orders(Request $request): JsonResponse
@@ -274,6 +284,7 @@ class MedicineDeliveryController extends Controller
         $orders = MedicineOrder::query()
             ->with('items', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
             ->where('user_id', $request->user()->id)
+            ->where('status', '!=', 'payment_pending')
             ->latest()
             ->paginate(20);
         $orders->setCollection($orders->getCollection()->map(fn (MedicineOrder $order) => $this->decorateOrder($order)));
@@ -360,6 +371,7 @@ class MedicineDeliveryController extends Controller
 
         $payload = app(BkashTokenizedCheckoutService::class)->executePayment($order, $settings, $data['payment_id'] ?? null);
         $this->applyBkashPaymentResult($order, $payload, $data['transaction_id'] ?? null);
+        $this->finalizePaidBkashOrder($order);
 
         return response()->json([
             'message' => $order->payment_status === 'paid' ? 'bKash payment completed.' : 'bKash payment is not completed yet.',
@@ -386,6 +398,7 @@ class MedicineDeliveryController extends Controller
                 $settings = MedicinePaymentSetting::current();
                 $payload = app(BkashTokenizedCheckoutService::class)->executePayment($order, $settings, $paymentId);
                 $this->applyBkashPaymentResult($order, $payload);
+                $this->finalizePaidBkashOrder($order);
             } catch (\Throwable $e) {
                 Log::error('bKash callback execute failed', [
                     'order_id' => $order->id,
@@ -668,8 +681,22 @@ class MedicineDeliveryController extends Controller
             'manual_transaction_id' => $trxId ?: $order->manual_transaction_id,
             'bkash_raw' => $payload,
             'payment_status' => $isPaid ? 'paid' : $order->payment_status,
+            'status' => $isPaid && $order->status === 'payment_pending' ? 'pending' : $order->status,
             'bkash_paid_at' => $isPaid ? now() : $order->bkash_paid_at,
         ])->save();
+    }
+
+    private function finalizePaidBkashOrder(MedicineOrder $order): void
+    {
+        $order->refresh();
+        if ($order->payment_method !== 'bkash_tokenized' || $order->payment_status !== 'paid') {
+            return;
+        }
+
+        $cart = MedicineCart::query()->where('user_id', $order->user_id)->first();
+        $cart?->items()->delete();
+
+        $this->dispatchOrderToNearbyRiders($order);
     }
 
     private function dispatchOrderToNearbyRiders(MedicineOrder $order): void
