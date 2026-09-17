@@ -15,8 +15,11 @@ class FoodItem extends Model
         'is_available' => 'boolean',
         'is_popular' => 'boolean',
         'is_promoted' => 'boolean',
+        'promotion_priority' => 'integer',
         'price' => 'decimal:2',
         'discount_price' => 'decimal:2',
+        'promotion_starts_at' => 'datetime',
+        'promotion_ends_at' => 'datetime',
     ];
 
     public function restaurant()

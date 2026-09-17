@@ -35,17 +35,34 @@ class FoodDeliveryController extends Controller
 {
     public function home(Request $request): JsonResponse
     {
+        $promotedItems = FoodItem::query()
+            ->with('restaurant:id,name,address,phone')
+            ->where('status', 'active')
+            ->where('is_available', true)
+            ->where($this->activePromotionFilter())
+            ->whereHas('restaurant', fn ($query) => $this->availableRestaurantFilter($query))
+            ->orderByDesc('promotion_priority')
+            ->orderByDesc('id')
+            ->limit(12)
+            ->get();
+
         $popularItems = FoodItem::query()
             ->with('restaurant:id,name,address,phone')
             ->where('status', 'active')
             ->where('is_available', true)
-            ->where(function ($query): void {
-                $query->where('is_promoted', true)->orWhere('is_popular', true);
-            })
+            ->whereHas('restaurant', fn ($query) => $this->availableRestaurantFilter($query))
+            ->where('is_popular', true)
+            ->orderByDesc('promotion_priority')
             ->orderByDesc('is_promoted')
-            ->inRandomOrder()
+            ->orderByDesc('id')
             ->limit(16)
             ->get();
+
+        $featuredRestaurants = $this->restaurantQuery($request)
+            ->where($this->activePromotionFilter())
+            ->limit(10)
+            ->get()
+            ->map(fn ($r) => $this->decorateRestaurant($r, $request));
 
         $banners = FoodBanner::query()
             ->where('is_active', true)
@@ -63,7 +80,9 @@ class FoodDeliveryController extends Controller
         return response()->json([
             'categories' => FoodCategory::query()->where('is_active', true)->orderBy('sort_order')->orderBy('name')->get(),
             'banners' => $this->decorateFoodBanners($banners, $request),
+            'featured_restaurants' => $featuredRestaurants,
             'restaurants' => $this->restaurantQuery($request)->limit(12)->get()->map(fn ($r) => $this->decorateRestaurant($r, $request)),
+            'promoted_items' => $this->decorateFoodItems($promotedItems),
             'popular_items' => $this->decorateFoodItems($popularItems),
             'offers' => FoodCoupon::query()->where('is_active', true)->latest()->limit(10)->get(),
             'areas' => ['Bhola Sadar', 'Borhanuddin', 'Daulatkhan', 'Lalmohan', 'Char Fasson', 'Tazumuddin', 'Manpura', 'Ilisha', 'Bangla Bazar', 'Ukil Para', 'Sadar Road', 'Notun Bazar', 'Launch Ghat'],
@@ -87,8 +106,10 @@ class FoodDeliveryController extends Controller
         $items = FoodItem::query()
             ->where('restaurant_id', $id)
             ->where('status', 'active')
-            ->orderByDesc('is_promoted')
-            ->inRandomOrder()
+            ->orderByRaw($this->promotionOrderSql().' desc')
+            ->orderByDesc('promotion_priority')
+            ->orderByDesc('is_popular')
+            ->orderBy('name')
             ->get();
         $restaurant->menu_categories = FoodCategory::query()
             ->whereIn('id', $items->pluck('food_category_id')->filter()->unique())
@@ -132,8 +153,10 @@ class FoodDeliveryController extends Controller
                 });
             })
             ->when($request->filled('category_id'), fn ($q) => $q->where('food_category_id', (int) $request->query('category_id')))
-            ->orderByDesc('is_promoted')
-            ->inRandomOrder()
+            ->orderByRaw($this->promotionOrderSql().' desc')
+            ->orderByDesc('promotion_priority')
+            ->orderByDesc('is_popular')
+            ->orderByDesc('id')
             ->paginate((int) min(max((int) $request->query('per_page', 30), 1), 100));
 
         $items->setCollection($this->decorateFoodItems($items->getCollection()));
@@ -822,11 +845,7 @@ class FoodDeliveryController extends Controller
     private function restaurantQuery(Request $request)
     {
         return Restaurant::query()
-            ->where('status', 'active')
-            ->where('delivery_available', true)
-            ->where(function ($q) {
-                $q->whereNull('accepts_food_orders')->orWhere('accepts_food_orders', true);
-            })
+            ->where(fn ($query) => $this->availableRestaurantFilter($query))
             ->when($request->filled('q'), fn ($q) => $q->where('name', 'like', '%' . $request->query('q') . '%'))
             ->when($request->filled('area'), fn ($q) => $q->where(function ($sub) use ($request) {
                 $term = '%' . $request->query('area') . '%';
@@ -835,8 +854,37 @@ class FoodDeliveryController extends Controller
             ->when($request->filled('category_id'), fn ($q) => $q->where('category_id', (int) $request->query('category_id')))
             ->when($request->filled('min_price'), fn ($q) => $q->where('min_price', '>=', (int) $request->query('min_price')))
             ->when($request->filled('max_price'), fn ($q) => $q->where('max_price', '<=', (int) $request->query('max_price')))
+            ->orderByRaw($this->promotionOrderSql().' desc')
+            ->orderByDesc('promotion_priority')
             ->orderByDesc('rating')
             ->orderByDesc('id');
+    }
+
+    private function availableRestaurantFilter($query): void
+    {
+        $query->where('status', 'active')
+            ->where('delivery_available', true)
+            ->where(function ($q) {
+                $q->whereNull('accepts_food_orders')->orWhere('accepts_food_orders', true);
+            });
+    }
+
+    private function activePromotionFilter(): \Closure
+    {
+        return function ($query): void {
+            $query->where('is_promoted', true)
+                ->where(function ($q): void {
+                    $q->whereNull('promotion_starts_at')->orWhere('promotion_starts_at', '<=', now());
+                })
+                ->where(function ($q): void {
+                    $q->whereNull('promotion_ends_at')->orWhere('promotion_ends_at', '>=', now());
+                });
+        };
+    }
+
+    private function promotionOrderSql(): string
+    {
+        return "case when is_promoted = 1 and (promotion_starts_at is null or promotion_starts_at <= now()) and (promotion_ends_at is null or promotion_ends_at >= now()) then 1 else 0 end";
     }
 
     private function foodReviewQuery()
@@ -852,6 +900,10 @@ class FoodDeliveryController extends Controller
         $restaurant->delivery_time = '৩০-৫০ মিনিট';
         $restaurant->minimum_order = $restaurant->min_price ?: null;
         $restaurant->is_open = true;
+        $restaurant->is_currently_promoted = $this->isCurrentlyPromoted($restaurant);
+        $restaurant->promotion_label = $restaurant->is_currently_promoted
+            ? ($restaurant->promotion_badge ?: 'Featured')
+            : null;
         $restaurant->payment_options = $this->restaurantPaymentOptions($restaurant);
         return $restaurant;
     }
@@ -864,6 +916,10 @@ class FoodDeliveryController extends Controller
             : null;
         $restaurant->menu_items_count = FoodItem::query()->where('restaurant_id', $restaurant->id)->count();
         $restaurant->pending_orders_count = FoodOrder::query()->where('restaurant_id', $restaurant->id)->where('status', 'pending')->count();
+        $restaurant->is_currently_promoted = $this->isCurrentlyPromoted($restaurant);
+        $restaurant->promotion_label = $restaurant->is_currently_promoted
+            ? ($restaurant->promotion_badge ?: 'Featured')
+            : null;
         $restaurant->payment_options = $this->restaurantPaymentOptions($restaurant);
         return $restaurant;
     }
@@ -920,6 +976,8 @@ class FoodDeliveryController extends Controller
         $item->image_url = MediaLookup::primaryUrlMap('food_item', [$item->id])[$item->id] ?? null;
         $item->size_options = $this->normalizeSizeOptions($item->size_options ?? [], (float) ($item->discount_price ?: $item->price));
         $item->spice_options = $this->cleanStringOptions($item->spice_options ?? []);
+        $item->is_currently_promoted = $this->isCurrentlyPromoted($item);
+        $item->promotion_label = $item->is_currently_promoted ? ($item->promotion_badge ?: 'Promoted') : null;
         return $item;
     }
 
@@ -930,8 +988,27 @@ class FoodDeliveryController extends Controller
             $item->image_url = $imageMap[$item->id] ?? null;
             $item->size_options = $this->normalizeSizeOptions($item->size_options ?? [], (float) ($item->discount_price ?: $item->price));
             $item->spice_options = $this->cleanStringOptions($item->spice_options ?? []);
+            $item->is_currently_promoted = $this->isCurrentlyPromoted($item);
+            $item->promotion_label = $item->is_currently_promoted ? ($item->promotion_badge ?: 'Promoted') : null;
             return $item;
         });
+    }
+
+    private function isCurrentlyPromoted(Restaurant|FoodItem $record): bool
+    {
+        if (! $record->is_promoted) {
+            return false;
+        }
+
+        if ($record->promotion_starts_at && $record->promotion_starts_at->isFuture()) {
+            return false;
+        }
+
+        if ($record->promotion_ends_at && $record->promotion_ends_at->isPast()) {
+            return false;
+        }
+
+        return true;
     }
 
     private function unitPriceForSize(FoodItem $item, ?string $size): float
