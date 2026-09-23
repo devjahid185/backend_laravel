@@ -239,6 +239,12 @@ class AdminResourceController extends Controller
 
         $record = $model::query()->findOrFail($id);
         $payload = $this->normalizePayload($resource, $request->except(['id', 'created_at', 'updated_at', 'deleted_at']));
+        if (($record instanceof FoodOrder || $record instanceof MedicineOrder) && isset($payload['status'])) {
+            $timestampColumn = $this->statusTimestampColumn((string) $payload['status']);
+            if ($timestampColumn && empty($record->{$timestampColumn})) {
+                $payload[$timestampColumn] = now();
+            }
+        }
         $record->fill($payload)->save();
 
         return response()->json(['message' => 'Updated', 'record' => $record]);
@@ -682,6 +688,7 @@ class AdminResourceController extends Controller
         $order->payment_proof_photo_url = $order->payment_proof_photo
             ? asset('storage/'.$order->payment_proof_photo)
             : null;
+        $order->status_timeline = $this->orderStatusTimeline($order, 'food');
 
         return $order;
     }
@@ -702,8 +709,73 @@ class AdminResourceController extends Controller
         $order->delivery_proof_photo_url = $order->delivery_proof_photo
             ? asset('storage/'.$order->delivery_proof_photo)
             : null;
+        $order->status_timeline = $this->orderStatusTimeline($order, 'medicine');
 
         return $order;
+    }
+
+    private function orderStatusTimeline(FoodOrder|MedicineOrder $order, string $serviceType): array
+    {
+        $labels = $serviceType === 'medicine'
+            ? [
+                'payment_pending' => 'Payment Pending',
+                'pending' => 'Waiting for Store Acceptance',
+                'accepted' => 'Accepted',
+                'preparing' => 'Processing',
+                'picked_up' => 'Picked Up',
+                'on_the_way' => 'On The Way',
+                'delivered' => 'Delivered',
+                'cancelled' => 'Cancelled',
+                'rejected' => 'Rejected',
+            ]
+            : [
+                'pending' => 'Waiting for Restaurant Acceptance',
+                'accepted' => 'Accepted',
+                'preparing' => 'Preparing',
+                'picked_up' => 'Picked Up',
+                'on_the_way' => 'On The Way',
+                'delivered' => 'Delivered',
+                'cancelled' => 'Cancelled',
+                'rejected' => 'Rejected',
+            ];
+        $statuses = $order->status === 'payment_pending'
+            ? ['payment_pending']
+            : array_merge(
+                ['pending', 'accepted', 'preparing', 'picked_up', 'on_the_way', 'delivered'],
+                in_array($order->status, ['cancelled', 'rejected'], true) ? [$order->status] : [],
+            );
+        $currentIndex = array_search($order->status, $statuses, true);
+        if ($currentIndex === false) {
+            $currentIndex = 0;
+        }
+
+        return collect($statuses)->map(function (string $status, int $index) use ($order, $labels, $currentIndex): array {
+            $column = $this->statusTimestampColumn($status);
+            $time = $column ? $order->{$column} : null;
+
+            return [
+                'status' => $status,
+                'label' => $labels[$status] ?? $status,
+                'completed' => $index <= $currentIndex,
+                'current' => $status === $order->status,
+                'timestamp' => $time?->toIso8601String(),
+            ];
+        })->values()->all();
+    }
+
+    private function statusTimestampColumn(string $status): ?string
+    {
+        return [
+            'payment_pending' => 'created_at',
+            'pending' => 'created_at',
+            'accepted' => 'accepted_at',
+            'preparing' => 'preparing_at',
+            'picked_up' => 'picked_up_at',
+            'on_the_way' => 'on_the_way_at',
+            'delivered' => 'delivered_at',
+            'cancelled' => 'cancelled_at',
+            'rejected' => 'rejected_at',
+        ][$status] ?? null;
     }
 
     private function foodOrderDistanceKm(FoodOrder $order): ?float

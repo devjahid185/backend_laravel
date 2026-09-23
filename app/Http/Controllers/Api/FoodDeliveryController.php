@@ -356,7 +356,7 @@ class FoodDeliveryController extends Controller
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->query('status')))
             ->latest()
             ->paginate(50);
-        $orders->setCollection($orders->getCollection()->map(fn (FoodOrder $order) => $this->decoratePaymentProof($order)));
+        $orders->setCollection($orders->getCollection()->map(fn (FoodOrder $order) => $this->decorateFoodOrder($order)));
 
         return response()->json($orders);
     }
@@ -506,17 +506,38 @@ class FoodDeliveryController extends Controller
 
         $quantity = (int) ($data['quantity'] ?? 1);
         $unit = $this->unitPriceForSize($item, $data['size'] ?? null);
-        FoodCartItem::query()->create([
-            'food_cart_id' => $cart->id,
-            'food_item_id' => $item->id,
+        $signature = $this->cartItemSignatureValues(
+            $item->id,
+            $data['size'] ?? null,
+            $data['spice_level'] ?? null,
+            $data['add_ons'] ?? [],
+            $data['note'] ?? null,
+        );
+        $row = FoodCartItem::query()
+            ->where('food_cart_id', $cart->id)
+            ->where('food_item_id', $item->id)
+            ->get()
+            ->first(fn (FoodCartItem $cartItem) => $this->cartItemSignature($cartItem) === $signature);
+
+        if ($row) {
+            $quantity += (int) $row->quantity;
+        } else {
+            $row = new FoodCartItem([
+                'food_cart_id' => $cart->id,
+                'food_item_id' => $item->id,
+                'size' => $data['size'] ?? null,
+                'spice_level' => $data['spice_level'] ?? null,
+                'add_ons' => $data['add_ons'] ?? [],
+                'note' => $data['note'] ?? null,
+            ]);
+        }
+
+        $row->fill([
             'quantity' => $quantity,
-            'size' => $data['size'] ?? null,
-            'spice_level' => $data['spice_level'] ?? null,
-            'add_ons' => $data['add_ons'] ?? [],
-            'note' => $data['note'] ?? null,
             'unit_price' => $unit,
             'total_price' => $unit * $quantity,
-        ]);
+        ])->save();
+
         return response()->json($this->cartPayload($request->user()->id), 201);
     }
 
@@ -555,8 +576,8 @@ class FoodDeliveryController extends Controller
             'payment_method' => ['nullable', 'in:cash_on_delivery,manual_bkash,manual_nagad,online'],
             'coupon_code' => ['nullable', 'string', 'max:40'],
             'order_note' => ['nullable', 'string', 'max:500'],
-            'delivery_lat' => ['required_if:order_type,delivery', 'nullable', 'numeric', 'between:-90,90'],
-            'delivery_lng' => ['required_if:order_type,delivery', 'nullable', 'numeric', 'between:-180,180'],
+            'delivery_lat' => ['nullable', 'numeric', 'between:-90,90'],
+            'delivery_lng' => ['nullable', 'numeric', 'between:-180,180'],
             'delivery_map_url' => ['nullable', 'string', 'max:255'],
             'manual_transaction_id' => ['nullable', 'string', 'max:120'],
             'payment_proof_photo' => ['nullable', 'file', 'image', 'max:4096'],
@@ -571,15 +592,19 @@ class FoodDeliveryController extends Controller
                 ? FoodAddress::query()->where('user_id', $request->user()->id)->findOrFail($data['food_address_id'])
                 : FoodAddress::query()->where('user_id', $request->user()->id)->where('is_default', true)->first();
             abort_unless($address, 422, 'Delivery address is required.');
-            abort_unless(isset($data['delivery_lat'], $data['delivery_lng']), 422, 'Current delivery location is required.');
+        }
+        $deliveryLat = $data['delivery_lat'] ?? $address?->lat;
+        $deliveryLng = $data['delivery_lng'] ?? $address?->lng;
+        if (($data['order_type'] ?? 'delivery') === 'delivery') {
+            abort_unless($deliveryLat !== null && $deliveryLng !== null, 422, 'Delivery map location is required.');
         }
 
         $itemsTotal = (float) $cart->items->sum('total_price');
         $charge = ($data['order_type'] ?? 'delivery') === 'delivery'
-            ? $this->deliveryCharge($cart->restaurant, $address?->area, (float) $data['delivery_lat'], (float) $data['delivery_lng'], $itemsTotal)
+            ? $this->deliveryCharge($cart->restaurant, $address?->area, (float) $deliveryLat, (float) $deliveryLng, $itemsTotal)
             : ['fee' => 0, 'distance_km' => null, 'mode' => 'pickup'];
         if (($data['order_type'] ?? 'delivery') === 'delivery' && $charge['distance_km'] === null) {
-            $charge['distance_km'] = $this->orderRouteDistance($cart->restaurant, (float) $data['delivery_lat'], (float) $data['delivery_lng']);
+            $charge['distance_km'] = $this->orderRouteDistance($cart->restaurant, (float) $deliveryLat, (float) $deliveryLng);
         }
         $deliveryFee = $charge['fee'];
         $couponResult = $this->couponDiscount(
@@ -608,7 +633,7 @@ class FoodDeliveryController extends Controller
             ? $request->file('payment_proof_photo')->store('food/payment-proofs', 'public')
             : null;
 
-        $order = DB::transaction(function () use ($request, $cart, $address, $data, $itemsTotal, $deliveryFee, $discount, $coupon, $couponResult, $grand, $charge, $paymentMethod, $proofPhotoPath, $commission) {
+        $order = DB::transaction(function () use ($request, $cart, $address, $data, $itemsTotal, $deliveryFee, $discount, $coupon, $couponResult, $grand, $charge, $paymentMethod, $proofPhotoPath, $commission, $deliveryLat, $deliveryLng) {
             $order = FoodOrder::query()->create([
                 'order_no' => 'FD-' . now()->format('ymd') . '-' . strtoupper(Str::random(6)),
                 'user_id' => $request->user()->id,
@@ -619,9 +644,9 @@ class FoodDeliveryController extends Controller
                 'delivery_address' => $address?->address ?? 'Pickup from restaurant',
                 'delivery_area' => $address?->area,
                 'landmark' => $address?->landmark,
-                'delivery_lat' => $data['delivery_lat'] ?? $address?->lat,
-                'delivery_lng' => $data['delivery_lng'] ?? $address?->lng,
-                'delivery_map_url' => $data['delivery_map_url'] ?? $this->mapUrl($data['delivery_lat'] ?? $address?->lat, $data['delivery_lng'] ?? $address?->lng),
+                'delivery_lat' => $deliveryLat,
+                'delivery_lng' => $deliveryLng,
+                'delivery_map_url' => $data['delivery_map_url'] ?? $this->mapUrl($deliveryLat, $deliveryLng),
                 'order_type' => $data['order_type'] ?? 'delivery',
                 'payment_method' => $paymentMethod,
                 'manual_transaction_id' => in_array($paymentMethod, ['manual_bkash', 'manual_nagad'], true)
@@ -800,7 +825,14 @@ class FoodDeliveryController extends Controller
 
     public function orders(Request $request): JsonResponse
     {
-        return response()->json(FoodOrder::query()->with('restaurant:id,name,phone,address,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')->where('user_id', $request->user()->id)->latest()->paginate(20));
+        $orders = FoodOrder::query()
+            ->with('restaurant:id,name,phone,address,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
+            ->where('user_id', $request->user()->id)
+            ->latest()
+            ->paginate(20);
+        $orders->setCollection($orders->getCollection()->map(fn (FoodOrder $order) => $this->decorateFoodOrder($order)));
+
+        return response()->json($orders);
     }
 
     public function order(Request $request, int $id): JsonResponse
@@ -809,7 +841,7 @@ class FoodDeliveryController extends Controller
             ->with('items', 'supportTickets:id,food_order_id,subject,message,status,admin_reply,created_at,updated_at', 'restaurant:id,name,phone,address,opening_hours,lat,lng,cod_enabled,manual_bkash_number,manual_nagad_number,manual_payment_instructions', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
             ->where('user_id', $request->user()->id)
             ->findOrFail($id);
-        $this->decoratePaymentProof($order);
+        $this->decorateFoodOrder($order);
         if ($order->restaurant) {
             $order->restaurant->payment_options = $this->restaurantPaymentOptions($order->restaurant);
         }
@@ -882,8 +914,9 @@ class FoodDeliveryController extends Controller
     {
         $order = FoodOrder::query()->where('user_id', $request->user()->id)->findOrFail($id);
         abort_unless(in_array($order->status, ['pending', 'accepted'], true), 422, 'This order cannot be cancelled now.');
+        $this->fillOrderStatusTimestamp($order, 'cancelled');
         $order->update(['status' => 'cancelled']);
-        return response()->json(['message' => 'Order cancelled', 'order' => $order]);
+        return response()->json(['message' => 'Order cancelled', 'order' => $this->decorateFoodOrder($order->fresh())]);
     }
 
     public function updateOrderStatus(Request $request, int $id): JsonResponse
@@ -896,14 +929,13 @@ class FoodDeliveryController extends Controller
         $order = FoodOrder::query()->with('restaurant')->findOrFail($id);
         abort_unless((int) $order->restaurant?->user_id === (int) $request->user()->id, 403, 'Not allowed.');
         $order->fill($data);
-        if ($data['status'] === 'accepted') $order->accepted_at = now();
-        if ($data['status'] === 'delivered') $order->delivered_at = now();
+        $this->fillOrderStatusTimestamp($order, $data['status']);
         $order->save();
         if (in_array($data['status'], ['accepted', 'preparing'], true)) {
             $this->dispatchOrderToNearbyRiders($order->fresh('restaurant'));
         }
         $this->notifyFoodOrderCustomer($order->fresh('restaurant'));
-        return response()->json(['message' => 'Order updated', 'order' => $order]);
+        return response()->json(['message' => 'Order updated', 'order' => $this->decorateFoodOrder($order->fresh('restaurant'))]);
     }
 
     public function favorites(Request $request): JsonResponse
@@ -1356,6 +1388,8 @@ class FoodDeliveryController extends Controller
     private function cartPayload(int $userId): array
     {
         $cart = FoodCart::query()->with(['items.foodItem', 'restaurant'])->firstOrCreate(['user_id' => $userId]);
+        $this->consolidateCartItems($cart);
+        $cart->load(['items.foodItem', 'restaurant']);
         $imageMap = MediaLookup::primaryUrlMap('food_item', $cart->items->pluck('food_item_id')->all());
         $items = $cart->items->map(function ($row) use ($imageMap) {
             return [
@@ -1406,6 +1440,72 @@ class FoodDeliveryController extends Controller
             'delivery_charge_label' => $charge['label'] ?? null,
             'grand_total' => $itemsTotal + (float) ($deliveryFee ?? 0),
         ];
+    }
+
+    private function consolidateCartItems(FoodCart $cart): void
+    {
+        $cart->loadMissing('items');
+        $groups = $cart->items->groupBy(fn (FoodCartItem $item): string => $this->cartItemSignature($item));
+
+        foreach ($groups as $rows) {
+            if ($rows->count() < 2) {
+                continue;
+            }
+
+            /** @var FoodCartItem $base */
+            $base = $rows->first();
+            $quantity = (int) $rows->sum('quantity');
+            $unit = (float) $base->unit_price;
+            $base->update([
+                'quantity' => $quantity,
+                'total_price' => $unit * $quantity,
+            ]);
+            FoodCartItem::query()
+                ->whereIn('id', $rows->skip(1)->pluck('id')->all())
+                ->delete();
+        }
+
+        $cart->unsetRelation('items');
+    }
+
+    private function cartItemSignature(FoodCartItem $item): string
+    {
+        return $this->cartItemSignatureValues(
+            (int) $item->food_item_id,
+            $item->size,
+            $item->spice_level,
+            $item->add_ons ?? [],
+            $item->note,
+        );
+    }
+
+    private function cartItemSignatureValues(int $foodItemId, ?string $size, ?string $spiceLevel, mixed $addOns, ?string $note): string
+    {
+        return json_encode([
+            'food_item_id' => $foodItemId,
+            'size' => trim((string) $size),
+            'spice_level' => trim((string) $spiceLevel),
+            'add_ons' => $this->normalizeCartOptionValue($addOns),
+            'note' => trim((string) $note),
+        ], JSON_UNESCAPED_UNICODE);
+    }
+
+    private function normalizeCartOptionValue(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        if (array_is_list($value)) {
+            $normalized = array_map(fn (mixed $item): mixed => $this->normalizeCartOptionValue($item), $value);
+            usort($normalized, fn (mixed $a, mixed $b): int => strcmp(json_encode($a), json_encode($b)));
+
+            return $normalized;
+        }
+
+        ksort($value);
+
+        return array_map(fn (mixed $item): mixed => $this->normalizeCartOptionValue($item), $value);
     }
 
     private function deliveryFee(?Restaurant $restaurant, ?string $area): float
@@ -1689,7 +1789,7 @@ class FoodDeliveryController extends Controller
     private function statusLabels(): array
     {
         return [
-            'pending' => 'অর্ডার পাঠানো হয়েছে',
+            'pending' => 'রেস্টুরেন্ট গ্রহণের অপেক্ষায়',
             'accepted' => 'রেস্টুরেন্ট অর্ডার গ্রহণ করেছে',
             'preparing' => 'খাবার প্রস্তুত হচ্ছে',
             'picked_up' => 'ডেলিভারি পারসন খাবার নিয়েছে',
@@ -1699,6 +1799,63 @@ class FoodDeliveryController extends Controller
             'rejected' => 'রেস্টুরেন্ট অর্ডার গ্রহণ করেনি',
         ];
     }
+
+    private function decorateFoodOrder(FoodOrder $order): FoodOrder
+    {
+        $this->decoratePaymentProof($order);
+        $order->status_timeline = $this->orderStatusTimeline($order);
+
+        return $order;
+    }
+
+    private function fillOrderStatusTimestamp(FoodOrder $order, string $status): void
+    {
+        $column = $this->statusTimestampColumn($status);
+        if ($column && empty($order->{$column})) {
+            $order->{$column} = now();
+        }
+    }
+
+    private function orderStatusTimeline(FoodOrder $order): array
+    {
+        $labels = $this->statusLabels();
+        $terminal = in_array($order->status, ['cancelled', 'rejected'], true)
+            ? [$order->status]
+            : [];
+        $statuses = array_merge(['pending', 'accepted', 'preparing', 'picked_up', 'on_the_way', 'delivered'], $terminal);
+        $currentIndex = array_search($order->status, $statuses, true);
+        if ($currentIndex === false) {
+            $currentIndex = 0;
+        }
+
+        return collect($statuses)->map(function (string $status, int $index) use ($order, $labels, $currentIndex): array {
+            $column = $this->statusTimestampColumn($status);
+            $time = $column ? $order->{$column} : null;
+
+            return [
+                'status' => $status,
+                'label' => $labels[$status] ?? $status,
+                'completed' => $index <= $currentIndex,
+                'current' => $status === $order->status,
+                'timestamp' => $time?->toIso8601String(),
+            ];
+        })->values()->all();
+    }
+
+    private function statusTimestampColumn(string $status): ?string
+    {
+        return [
+            'pending' => 'created_at',
+            'accepted' => 'accepted_at',
+            'preparing' => 'preparing_at',
+            'picked_up' => 'picked_up_at',
+            'on_the_way' => 'on_the_way_at',
+            'delivered' => 'delivered_at',
+            'cancelled' => 'cancelled_at',
+            'rejected' => 'rejected_at',
+        ][$status] ?? null;
+    }
+
     private function refreshRating(?int $restaurantId, ?int $itemId): void
     {
         if ($restaurantId) {

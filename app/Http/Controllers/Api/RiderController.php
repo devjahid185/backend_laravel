@@ -327,12 +327,12 @@ class RiderController extends Controller
         }
 
         $payload = ['status' => $data['status']];
-        if ($data['status'] === 'picked_up') {
-            $payload['picked_up_at'] = now();
+        $timestampColumn = $this->statusTimestampColumn($data['status']);
+        if ($timestampColumn && empty($order->{$timestampColumn})) {
+            $payload[$timestampColumn] = now();
         }
         if ($data['status'] === 'delivered') {
-            $payload['delivered_at'] = now();
-            $payload['cash_collected'] = (float) ($data['cash_collected'] ?? $order->grand_total);
+            $payload['cash_collected'] = $this->expectedCashCollection($order);
             $payload['delivery_otp'] = null;
             $payload['delivery_otp_expires_at'] = null;
             if ($request->hasFile('proof_photo')) {
@@ -527,7 +527,7 @@ class RiderController extends Controller
     {
         DB::transaction(function () use ($rider, $order): void {
             $earning = (float) ($order->rider_earning ?: $this->calculateEarning($rider, $order));
-            $cash = (float) $order->cash_collected;
+            $cash = $this->expectedCashCollection($order);
             $rider->wallet_balance = (float) $rider->wallet_balance + $earning;
             $rider->pending_payout = (float) $rider->pending_payout + $earning;
             $rider->cash_in_hand = (float) $rider->cash_in_hand + $cash;
@@ -536,6 +536,7 @@ class RiderController extends Controller
             $order->update([
                 'rider_earning' => $earning,
                 'admin_delivery_income' => $this->calculateAdminDeliveryIncome($order, $earning),
+                'cash_collected' => $cash,
             ]);
             RiderWalletEntry::query()->create([
                 'rider_id' => $rider->id,
@@ -581,16 +582,32 @@ class RiderController extends Controller
             'status' => $order->status,
             'restaurant_name' => $restaurantName,
             'grand_total' => (float) ($order->grand_total ?? 0),
+            'payment_method' => $order->payment_method,
+            'payment_status' => $order->payment_status,
             'delivery_fee' => $deliveryFee,
             'rider_earning' => $riderEarning,
             'admin_delivery_income' => round($adminIncome, 2),
             'cash_collected' => $cashCollected,
+            'cash_expected' => $this->expectedCashCollection($order),
+            'cash_required' => $this->isCashOnDelivery($order),
             'payout_status' => $earningEntry?->payout_status ?? 'pending',
             'payout_reference' => $earningEntry?->payout_reference,
             'paid_out_at' => $earningEntry?->paid_out_at,
             'delivered_at' => $order->delivered_at ?? $order->updated_at,
             'wallet_entry_id' => $earningEntry?->id,
         ];
+    }
+
+    private function expectedCashCollection(FoodOrder|MedicineOrder $order): float
+    {
+        return $this->isCashOnDelivery($order)
+            ? round((float) ($order->grand_total ?? 0), 2)
+            : 0.0;
+    }
+
+    private function isCashOnDelivery(FoodOrder|MedicineOrder $order): bool
+    {
+        return ($order->payment_method ?? null) === 'cash_on_delivery';
     }
 
     private function calculateEarning(Rider $rider, FoodOrder|MedicineOrder $order): float
@@ -688,6 +705,12 @@ class RiderController extends Controller
     {
         $data = $order->toArray();
         $data['service_type'] = $serviceType;
+        $data['cash_required'] = $this->isCashOnDelivery($order);
+        $data['cash_collection'] = $this->expectedCashCollection($order);
+        $data['cash_collection_label'] = $data['cash_required']
+            ? 'কাস্টমারের কাছ থেকে ক্যাশ সংগ্রহ করতে হবে'
+            : 'এই অর্ডারে রাইডারকে ক্যাশ নিতে হবে না';
+        $data['status_timeline'] = $this->orderStatusTimeline($order, $serviceType);
         if ($serviceType === 'medicine') {
             $settings = FoodDeliverySetting::current();
             $pickupLat = $settings->store_lat !== null
@@ -710,6 +733,76 @@ class RiderController extends Controller
         }
 
         return $data;
+    }
+
+    private function orderStatusTimeline(FoodOrder|MedicineOrder $order, string $serviceType): array
+    {
+        $labels = $this->orderStatusLabels($serviceType);
+        $statuses = $order->status === 'payment_pending'
+            ? ['payment_pending']
+            : array_merge(
+                ['pending', 'accepted', 'preparing', 'picked_up', 'on_the_way', 'delivered'],
+                in_array($order->status, ['cancelled', 'rejected'], true) ? [$order->status] : [],
+            );
+        $currentIndex = array_search($order->status, $statuses, true);
+        if ($currentIndex === false) {
+            $currentIndex = 0;
+        }
+
+        return collect($statuses)->map(function (string $status, int $index) use ($order, $labels, $currentIndex): array {
+            $column = $this->statusTimestampColumn($status);
+            $time = $column ? $order->{$column} : null;
+
+            return [
+                'status' => $status,
+                'label' => $labels[$status] ?? $status,
+                'completed' => $index <= $currentIndex,
+                'current' => $status === $order->status,
+                'timestamp' => $time?->toIso8601String(),
+            ];
+        })->values()->all();
+    }
+
+    private function statusTimestampColumn(string $status): ?string
+    {
+        return [
+            'pending' => 'created_at',
+            'accepted' => 'accepted_at',
+            'preparing' => 'preparing_at',
+            'picked_up' => 'picked_up_at',
+            'on_the_way' => 'on_the_way_at',
+            'delivered' => 'delivered_at',
+            'cancelled' => 'cancelled_at',
+            'rejected' => 'rejected_at',
+        ][$status] ?? null;
+    }
+
+    private function orderStatusLabels(string $serviceType): array
+    {
+        if ($serviceType === 'medicine') {
+            return [
+                'payment_pending' => 'পেমেন্ট অপেক্ষমাণ',
+                'pending' => 'স্টোর গ্রহণের অপেক্ষায়',
+                'accepted' => 'মেডিসিন অর্ডার গ্রহণ হয়েছে',
+                'preparing' => 'মেডিসিন প্রস্তুত হচ্ছে',
+                'picked_up' => 'মেডিসিন পিকআপ হয়েছে',
+                'on_the_way' => 'রাইডার পথে আছে',
+                'delivered' => 'ডেলিভারি সম্পন্ন',
+                'cancelled' => 'অর্ডার বাতিল',
+                'rejected' => 'অর্ডার গ্রহণ হয়নি',
+            ];
+        }
+
+        return [
+            'pending' => 'রেস্টুরেন্ট গ্রহণের অপেক্ষায়',
+            'accepted' => 'রেস্টুরেন্ট অর্ডার গ্রহণ করেছে',
+            'preparing' => 'খাবার প্রস্তুত হচ্ছে',
+            'picked_up' => 'রাইডার খাবার নিয়েছে',
+            'on_the_way' => 'পথে আছে',
+            'delivered' => 'ডেলিভারি সম্পন্ন',
+            'cancelled' => 'অর্ডার বাতিল',
+            'rejected' => 'অর্ডার গ্রহণ হয়নি',
+        ];
     }
 
     private function dispatchNearbyPendingOrders(Rider $rider): void

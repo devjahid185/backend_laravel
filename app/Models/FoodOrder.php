@@ -16,7 +16,12 @@ class FoodOrder extends Model
     protected $casts = [
         'estimated_delivery_at' => 'datetime',
         'accepted_at' => 'datetime',
+        'preparing_at' => 'datetime',
+        'picked_up_at' => 'datetime',
+        'on_the_way_at' => 'datetime',
         'delivered_at' => 'datetime',
+        'cancelled_at' => 'datetime',
+        'rejected_at' => 'datetime',
         'delivery_otp_sent_at' => 'datetime',
         'delivery_otp_expires_at' => 'datetime',
         'delivery_otp_send_failed_at' => 'datetime',

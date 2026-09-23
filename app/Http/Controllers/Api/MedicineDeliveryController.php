@@ -858,7 +858,56 @@ class MedicineDeliveryController extends Controller
         $order->rider_assignment_label = $order->rider_id ? 'Rider accepted' : 'Waiting for rider';
         $order->payment_options = $this->paymentOptions();
         $order->payment_notice = MedicinePaymentSetting::current()->payment_notice;
+        $order->status_timeline = $this->orderStatusTimeline($order);
 
         return $order;
+    }
+
+    private function orderStatusTimeline(MedicineOrder $order): array
+    {
+        $labels = [
+            'payment_pending' => 'পেমেন্ট অপেক্ষমাণ',
+            'pending' => 'স্টোর গ্রহণের অপেক্ষায়',
+            'accepted' => 'মেডিসিন অর্ডার গ্রহণ হয়েছে',
+            'preparing' => 'মেডিসিন প্রস্তুত হচ্ছে',
+            'picked_up' => 'মেডিসিন পিকআপ হয়েছে',
+            'on_the_way' => 'রাইডার পথে আছে',
+            'delivered' => 'ডেলিভারি সম্পন্ন',
+            'cancelled' => 'অর্ডার বাতিল',
+            'rejected' => 'অর্ডার গ্রহণ হয়নি',
+        ];
+        $statuses = $order->status === 'payment_pending'
+            ? ['payment_pending']
+            : array_merge(
+                ['pending', 'accepted', 'preparing', 'picked_up', 'on_the_way', 'delivered'],
+                in_array($order->status, ['cancelled', 'rejected'], true) ? [$order->status] : [],
+            );
+        $currentIndex = array_search($order->status, $statuses, true);
+        if ($currentIndex === false) {
+            $currentIndex = 0;
+        }
+
+        return collect($statuses)->map(function (string $status, int $index) use ($order, $labels, $currentIndex): array {
+            $column = [
+                'payment_pending' => 'created_at',
+                'pending' => 'created_at',
+                'accepted' => 'accepted_at',
+                'preparing' => 'preparing_at',
+                'picked_up' => 'picked_up_at',
+                'on_the_way' => 'on_the_way_at',
+                'delivered' => 'delivered_at',
+                'cancelled' => 'cancelled_at',
+                'rejected' => 'rejected_at',
+            ][$status] ?? null;
+            $time = $column ? $order->{$column} : null;
+
+            return [
+                'status' => $status,
+                'label' => $labels[$status] ?? $status,
+                'completed' => $index <= $currentIndex,
+                'current' => $status === $order->status,
+                'timestamp' => $time?->toIso8601String(),
+            ];
+        })->values()->all();
     }
 }
