@@ -55,6 +55,7 @@ class AuthController extends Controller
             'phone' => ['required', 'string', 'max:20'],
             'purpose' => ['required', 'in:register,reset,login,password_change'],
         ]);
+        $isPlayReviewOtp = $this->isPlayReviewOtpFlow($validated['phone'], $validated['purpose']);
 
         if ($validated['purpose'] === 'password_change' && ! $request->user()) {
             return response()->json(['message' => 'Unauthorized.'], 401);
@@ -68,51 +69,60 @@ class AuthController extends Controller
         }
 
         $cooldownKey = $this->otpThrottleKey('otp-request-cooldown', $validated['phone'], $validated['purpose'], $request->ip());
-        if (RateLimiter::tooManyAttempts($cooldownKey, 1)) {
+        if (! $isPlayReviewOtp && RateLimiter::tooManyAttempts($cooldownKey, 1)) {
             return response()->json([
                 'message' => 'Please wait '.RateLimiter::availableIn($cooldownKey).' seconds before requesting another OTP.',
             ], 429);
         }
 
         $burstKey = $this->otpThrottleKey('otp-request-burst', $validated['phone'], $validated['purpose'], $request->ip());
-        if (RateLimiter::tooManyAttempts($burstKey, 5)) {
+        if (! $isPlayReviewOtp && RateLimiter::tooManyAttempts($burstKey, 5)) {
             return response()->json([
                 'message' => 'Too many OTP requests. Please try again after '.ceil(RateLimiter::availableIn($burstKey) / 60).' minutes.',
             ], 429);
         }
 
-        RateLimiter::hit($cooldownKey, 60);
-        RateLimiter::hit($burstKey, 15 * 60);
+        if (! $isPlayReviewOtp) {
+            RateLimiter::hit($cooldownKey, 60);
+            RateLimiter::hit($burstKey, 15 * 60);
+        }
 
         PhoneOtp::query()
             ->where('phone', $validated['phone'])
             ->where('purpose', $validated['purpose'])
             ->delete();
 
-        $code = (string) random_int(100000, 999999);
+        $code = $isPlayReviewOtp
+            ? $this->playReviewOtpCode()
+            : (string) random_int(100000, 999999);
         $otp = PhoneOtp::query()->create([
             'phone' => $validated['phone'],
             'code' => $code,
             'purpose' => $validated['purpose'],
-            'expires_at' => now()->addMinutes(5),
+            'expires_at' => now()->addMinutes($isPlayReviewOtp ? 30 : 5),
         ]);
-        Log::info("Generated OTP for {$validated['phone']} ({$validated['purpose']}): $code");
+        Log::info($isPlayReviewOtp
+            ? "Prepared Play review OTP for {$validated['phone']} ({$validated['purpose']})"
+            : "Generated OTP for {$validated['phone']} ({$validated['purpose']}): $code"
+        );
 
-        try {
-            $sms->sendOtp($validated['phone'], $code);
-        } catch (\Throwable $e) {
-            Log::error('OTP SMS failed', [
-                'phone' => $this->maskPhone($validated['phone']),
-                'purpose' => $validated['purpose'],
-                'error' => $e->getMessage(),
-            ]);
+        if (! $isPlayReviewOtp) {
+            try {
+                $sms->sendOtp($validated['phone'], $code);
+            } catch (\Throwable $e) {
+                Log::error('OTP SMS failed', [
+                    'phone' => $this->maskPhone($validated['phone']),
+                    'purpose' => $validated['purpose'],
+                    'error' => $e->getMessage(),
+                ]);
 
-            $message = 'OTP পাঠাতে সমস্যা হয়েছে। একটু পরে আবার চেষ্টা করুন।';
-            if (config('app.debug')) {
-                $message = $message.' ('.$e->getMessage().')';
+                $message = 'OTP পাঠাতে সমস্যা হয়েছে। একটু পরে আবার চেষ্টা করুন।';
+                if (config('app.debug')) {
+                    $message = $message.' ('.$e->getMessage().')';
+                }
+
+                return response()->json(['message' => $message], 500);
             }
-
-            return response()->json(['message' => $message], 500);
         }
 
         $response = [
@@ -125,6 +135,36 @@ class AuthController extends Controller
         }
 
         return response()->json($response);
+    }
+
+    private function isPlayReviewOtpFlow(string $phone, string $purpose): bool
+    {
+        return in_array($purpose, ['login', 'register'], true)
+            && $this->normalizePhoneForReviewOtp($phone) === $this->normalizePhoneForReviewOtp($this->playReviewPhone());
+    }
+
+    private function playReviewPhone(): string
+    {
+        return (string) env('PLAY_REVIEW_PHONE', '01900000000');
+    }
+
+    private function playReviewOtpCode(): string
+    {
+        return (string) env('PLAY_REVIEW_OTP', '123456');
+    }
+
+    private function normalizePhoneForReviewOtp(string $phone): string
+    {
+        $digits = preg_replace('/\D+/', '', $phone) ?? '';
+        if (str_starts_with($digits, '880') && strlen($digits) === 13) {
+            return '0'.substr($digits, 3);
+        }
+
+        if (str_starts_with($digits, '88') && strlen($digits) === 13) {
+            return substr($digits, 2);
+        }
+
+        return $digits;
     }
 
     private function maskPhone(string $phone): string
