@@ -56,7 +56,6 @@ class AppVersionController extends Controller
             'title' => $settings->update_title,
             'message' => $settings->update_message,
             'store_url' => $settings->store_url,
-            'direct_apk_url' => $settings->direct_apk_url,
             'maintenance' => (bool) $settings->maintenance_mode,
             'maintenance_title' => $settings->maintenance_title,
             'maintenance_message' => $settings->maintenance_message,

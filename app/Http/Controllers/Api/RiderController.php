@@ -377,13 +377,64 @@ class RiderController extends Controller
     public function wallet(Request $request): JsonResponse
     {
         $rider = $this->riderFor($request);
+        $entries = RiderWalletEntry::query()
+            ->with('order:id,order_no,status,grand_total,delivery_fee,rider_earning,admin_delivery_income,cash_collected,delivered_at')
+            ->where('rider_id', $rider->id)
+            ->latest()
+            ->paginate(50);
+
+        $deliveredFoodOrders = FoodOrder::query()
+            ->with('restaurant:id,name,phone,address')
+            ->where('rider_id', $rider->id)
+            ->where('status', 'delivered')
+            ->latest('delivered_at')
+            ->latest()
+            ->limit(100)
+            ->get();
+        $deliveredMedicineOrders = MedicineOrder::query()
+            ->where('rider_id', $rider->id)
+            ->where('status', 'delivered')
+            ->latest('delivered_at')
+            ->latest()
+            ->limit(100)
+            ->get();
+        $earningEntries = RiderWalletEntry::query()
+            ->where('rider_id', $rider->id)
+            ->where('type', 'earning')
+            ->where(function ($query): void {
+                $query->whereNotNull('food_order_id')->orWhereNotNull('medicine_order_id');
+            })
+            ->get()
+            ->keyBy(fn (RiderWalletEntry $entry) => ($entry->food_order_id ? 'food:' . $entry->food_order_id : 'medicine:' . $entry->medicine_order_id));
+
+        $history = $deliveredFoodOrders
+            ->map(fn (FoodOrder $order) => $this->walletHistoryRow($order, 'food', $earningEntries->get('food:' . $order->id)))
+            ->toBase()
+            ->merge($deliveredMedicineOrders->map(fn (MedicineOrder $order) => $this->walletHistoryRow($order, 'medicine', $earningEntries->get('medicine:' . $order->id)))->toBase())
+            ->sortByDesc('delivered_at')
+            ->values();
+        $totalEarning = round((float) $history->sum('rider_earning'), 2);
+        $totalAdminIncome = round((float) $history->sum('admin_delivery_income'), 2);
+        $totalDeliveryFee = round((float) $history->sum('delivery_fee'), 2);
+        $totalCash = round((float) $history->sum('cash_collected'), 2);
+        $paidOut = round((float) $history->where('payout_status', 'paid')->sum('rider_earning'), 2);
+        $pending = round((float) $history->where('payout_status', '!=', 'paid')->sum('rider_earning'), 2);
+
         return response()->json([
             'summary' => [
                 'wallet_balance' => (float) $rider->wallet_balance,
                 'pending_payout' => (float) $rider->pending_payout,
                 'cash_in_hand' => (float) $rider->cash_in_hand,
+                'delivery_fee_total' => $totalDeliveryFee,
+                'rider_earning_total' => $totalEarning,
+                'admin_delivery_income_total' => $totalAdminIncome,
+                'cash_collected_total' => $totalCash,
+                'paid_out_total' => $paidOut,
+                'pending_from_history' => $pending,
+                'delivered_orders_count' => $history->count(),
             ],
-            'entries' => RiderWalletEntry::query()->where('rider_id', $rider->id)->latest()->paginate(50),
+            'delivery_history' => $history,
+            'entries' => $entries,
         ]);
     }
 
@@ -493,6 +544,7 @@ class RiderController extends Controller
                 'type' => 'earning',
                 'amount' => $earning,
                 'balance_after' => $rider->wallet_balance,
+                'payout_status' => 'pending',
                 'title' => 'ডেলিভারি আয়',
                 'note' => $order->order_no,
             ]);
@@ -504,11 +556,41 @@ class RiderController extends Controller
                     'type' => 'cash_collection',
                     'amount' => $cash,
                     'balance_after' => $rider->wallet_balance,
+                    'payout_status' => 'not_applicable',
                     'title' => 'ক্যাশ সংগ্রহ',
                     'note' => $order->order_no,
                 ]);
             }
         });
+    }
+
+    private function walletHistoryRow(FoodOrder|MedicineOrder $order, string $serviceType, ?RiderWalletEntry $earningEntry): array
+    {
+        $riderEarning = (float) ($order->rider_earning ?? $earningEntry?->amount ?? 0);
+        $deliveryFee = (float) ($order->delivery_fee ?? 0);
+        $adminIncome = (float) ($order->admin_delivery_income ?? max(0, $deliveryFee - $riderEarning));
+        $cashCollected = (float) ($order->cash_collected ?? 0);
+        $restaurantName = $order instanceof FoodOrder
+            ? ($order->restaurant?->name ?? null)
+            : 'Medicine delivery';
+
+        return [
+            'id' => $order->id,
+            'service_type' => $serviceType,
+            'order_no' => $order->order_no,
+            'status' => $order->status,
+            'restaurant_name' => $restaurantName,
+            'grand_total' => (float) ($order->grand_total ?? 0),
+            'delivery_fee' => $deliveryFee,
+            'rider_earning' => $riderEarning,
+            'admin_delivery_income' => round($adminIncome, 2),
+            'cash_collected' => $cashCollected,
+            'payout_status' => $earningEntry?->payout_status ?? 'pending',
+            'payout_reference' => $earningEntry?->payout_reference,
+            'paid_out_at' => $earningEntry?->paid_out_at,
+            'delivered_at' => $order->delivered_at ?? $order->updated_at,
+            'wallet_entry_id' => $earningEntry?->id,
+        ];
     }
 
     private function calculateEarning(Rider $rider, FoodOrder|MedicineOrder $order): float

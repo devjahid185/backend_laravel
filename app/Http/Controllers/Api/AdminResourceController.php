@@ -224,7 +224,7 @@ class AdminResourceController extends Controller
             return response()->json(['message' => 'Resource not supported.'], 422);
         }
 
-        $payload = $request->except(['id', 'created_at', 'updated_at', 'deleted_at']);
+        $payload = $this->normalizePayload($resource, $request->except(['id', 'created_at', 'updated_at', 'deleted_at']));
         $record = $model::query()->create($payload);
 
         return response()->json(['message' => 'Created', 'record' => $record], 201);
@@ -238,7 +238,7 @@ class AdminResourceController extends Controller
         }
 
         $record = $model::query()->findOrFail($id);
-        $payload = $request->except(['id', 'created_at', 'updated_at', 'deleted_at']);
+        $payload = $this->normalizePayload($resource, $request->except(['id', 'created_at', 'updated_at', 'deleted_at']));
         $record->fill($payload)->save();
 
         return response()->json(['message' => 'Updated', 'record' => $record]);
@@ -288,6 +288,9 @@ class AdminResourceController extends Controller
                     'admin_delivery_income_total' => $financials['admin_delivery_income_total'],
                     'restaurant_commission_total' => $financials['restaurant_commission_total'],
                     'restaurant_owner_payable_total' => $financials['restaurant_owner_payable_total'],
+                    'discount_total' => $financials['discount_total'],
+                    'admin_discount_total' => $financials['admin_discount_total'],
+                    'restaurant_discount_total' => $financials['restaurant_discount_total'],
                     'admin_total_income' => $financials['admin_total_income'],
                     'owner_settlement_due_total' => $financials['owner_settlement_due_total'],
                     'owner_payable_after_manual_total' => $financials['owner_payable_after_manual_total'],
@@ -309,6 +312,9 @@ class AdminResourceController extends Controller
                 'admin_delivery_income_total' => $this->deliveryFinancialTotals($rows, $settings)['admin_delivery_income_total'],
                 'restaurant_commission_total' => $this->deliveryFinancialTotals($rows, $settings)['restaurant_commission_total'],
                 'restaurant_owner_payable_total' => $this->deliveryFinancialTotals($rows, $settings)['restaurant_owner_payable_total'],
+                'discount_total' => $this->deliveryFinancialTotals($rows, $settings)['discount_total'],
+                'admin_discount_total' => $this->deliveryFinancialTotals($rows, $settings)['admin_discount_total'],
+                'restaurant_discount_total' => $this->deliveryFinancialTotals($rows, $settings)['restaurant_discount_total'],
                 'admin_total_income' => $this->deliveryFinancialTotals($rows, $settings)['admin_total_income'],
             ])
             ->values();
@@ -323,6 +329,10 @@ class AdminResourceController extends Controller
                 'admin_delivery_income_total' => $deliveryFinancials['admin_delivery_income_total'],
                 'restaurant_commission_total' => $deliveryFinancials['restaurant_commission_total'],
                 'restaurant_owner_payable_total' => $deliveryFinancials['restaurant_owner_payable_total'],
+                'discount_total' => $deliveryFinancials['discount_total'],
+                'admin_discount_total' => $deliveryFinancials['admin_discount_total'],
+                'restaurant_discount_total' => $deliveryFinancials['restaurant_discount_total'],
+                'delivery_discount_total' => $deliveryFinancials['delivery_discount_total'],
                 'admin_total_income' => $deliveryFinancials['admin_total_income'],
                 'owner_settlement_due_total' => $deliveryFinancials['owner_settlement_due_total'],
                 'owner_payable_after_manual_total' => $deliveryFinancials['owner_payable_after_manual_total'],
@@ -448,6 +458,48 @@ class AdminResourceController extends Controller
         return self::RESOURCE_MAP[$resource] ?? null;
     }
 
+    private function normalizePayload(string $resource, array $payload): array
+    {
+        if ($resource === 'food-coupons') {
+            if (! empty($payload['code'])) {
+                $payload['code'] = strtoupper(trim((string) $payload['code']));
+            }
+            $hasRestaurant = ! empty($payload['restaurant_id']);
+            $discountType = $payload['discount_type'] ?? 'fixed';
+            $payload['source'] = $payload['source'] ?? 'admin';
+            $payload['funding_source'] = $payload['funding_source'] ?? ($hasRestaurant ? 'restaurant' : 'admin');
+            $payload['applies_to'] = $payload['applies_to'] ?? ($discountType === 'free_delivery' ? 'delivery' : 'order_items');
+            foreach (['restaurant_id', 'owner_user_id', 'max_discount', 'usage_limit', 'per_user_limit', 'starts_at', 'ends_at', 'notes'] as $nullable) {
+                if (array_key_exists($nullable, $payload) && $payload[$nullable] === '') {
+                    $payload[$nullable] = null;
+                }
+            }
+            if ($discountType === 'free_delivery') {
+                $payload['discount_value'] = 0;
+                $payload['applies_to'] = 'delivery';
+            }
+        }
+        if ($resource === 'food-orders') {
+            foreach (['restaurant_payout_reference', 'restaurant_paid_out_at'] as $nullable) {
+                if (array_key_exists($nullable, $payload) && $payload[$nullable] === '') {
+                    $payload[$nullable] = null;
+                }
+            }
+        }
+        if ($resource === 'rider-wallet') {
+            foreach (['food_order_id', 'medicine_order_id', 'payout_reference', 'paid_out_at'] as $nullable) {
+                if (array_key_exists($nullable, $payload) && $payload[$nullable] === '') {
+                    $payload[$nullable] = null;
+                }
+            }
+            if (($payload['type'] ?? null) === 'cash_collection') {
+                $payload['payout_status'] = $payload['payout_status'] ?? 'not_applicable';
+            }
+        }
+
+        return $payload;
+    }
+
     private function columnsFor(string $model): array
     {
         $table = (new $model)->getTable();
@@ -497,6 +549,10 @@ class AdminResourceController extends Controller
         $adminIncome = 0;
         $restaurantCommission = 0;
         $restaurantOwnerPayable = 0;
+        $discountTotal = 0;
+        $adminDiscount = 0;
+        $restaurantDiscount = 0;
+        $deliveryDiscount = 0;
         $ownerSettlementDue = 0;
         $ownerPayableAfterManual = 0;
 
@@ -514,6 +570,10 @@ class AdminResourceController extends Controller
             $deliveryFee += $fee;
             $riderPayout += $rider;
             $adminIncome += $admin;
+            $discountTotal += (float) ($order->discount_amount ?? 0);
+            $adminDiscount += (float) ($order->admin_discount_amount ?? 0);
+            $restaurantDiscount += (float) ($order->restaurant_discount_amount ?? 0);
+            $deliveryDiscount += (float) ($order->delivery_discount_amount ?? 0);
 
             if ($order instanceof FoodOrder) {
                 $commission = (float) ($order->restaurant_commission_amount ?? 0);
@@ -539,6 +599,10 @@ class AdminResourceController extends Controller
             'admin_delivery_income_total' => round($adminIncome, 2),
             'restaurant_commission_total' => round($restaurantCommission, 2),
             'restaurant_owner_payable_total' => round($restaurantOwnerPayable, 2),
+            'discount_total' => round($discountTotal, 2),
+            'admin_discount_total' => round($adminDiscount, 2),
+            'restaurant_discount_total' => round($restaurantDiscount, 2),
+            'delivery_discount_total' => round($deliveryDiscount, 2),
             'admin_total_income' => round($adminIncome + $restaurantCommission, 2),
             'owner_settlement_due_total' => round($ownerSettlementDue, 2),
             'owner_payable_after_manual_total' => round($ownerPayableAfterManual, 2),

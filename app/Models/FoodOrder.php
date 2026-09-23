@@ -20,6 +20,8 @@ class FoodOrder extends Model
         'delivery_otp_sent_at' => 'datetime',
         'delivery_otp_expires_at' => 'datetime',
         'delivery_otp_send_failed_at' => 'datetime',
+        'discount_breakdown' => 'array',
+        'restaurant_paid_out_at' => 'datetime',
     ];
 
     public function items()
@@ -50,5 +52,10 @@ class FoodOrder extends Model
     public function supportTickets()
     {
         return $this->hasMany(FoodOrderSupportTicket::class);
+    }
+
+    public function coupon()
+    {
+        return $this->belongsTo(FoodCoupon::class, 'coupon_id');
     }
 }

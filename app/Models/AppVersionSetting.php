@@ -17,7 +17,6 @@ class AppVersionSetting extends Model
         'update_title',
         'update_message',
         'store_url',
-        'direct_apk_url',
         'maintenance_mode',
         'maintenance_title',
         'maintenance_message',
