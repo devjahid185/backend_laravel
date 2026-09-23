@@ -215,7 +215,9 @@ class MedicineDeliveryController extends Controller
             ? $request->file('payment_proof_photo')->store('medicine/payment-proofs', 'public')
             : null;
 
-        $order = DB::transaction(function () use ($request, $cart, $data, $itemsTotal, $deliveryFee, $paymentMethod, $proofPhotoPath, $charge) {
+        $isBkashCheckout = $paymentMethod === 'bkash_tokenized';
+
+        $order = DB::transaction(function () use ($request, $cart, $data, $itemsTotal, $deliveryFee, $paymentMethod, $proofPhotoPath, $charge, $isBkashCheckout) {
             $order = MedicineOrder::query()->create([
                 'order_no' => 'MD-' . now()->format('ymd') . '-' . strtoupper(Str::random(6)),
                 'user_id' => $request->user()->id,
@@ -226,7 +228,9 @@ class MedicineDeliveryController extends Controller
                 'delivery_lat' => $data['delivery_lat'] ?? null,
                 'delivery_lng' => $data['delivery_lng'] ?? null,
                 'delivery_map_url' => $data['delivery_map_url'] ?? $this->mapUrl($data['delivery_lat'], $data['delivery_lng']),
+                'status' => $isBkashCheckout ? 'payment_pending' : 'pending',
                 'payment_method' => $paymentMethod,
+                'payment_status' => $isBkashCheckout ? 'pending' : 'unpaid',
                 'manual_transaction_id' => in_array($paymentMethod, ['manual_bkash', 'manual_nagad'], true)
                     ? ($data['manual_transaction_id'] ?? null)
                     : null,
@@ -256,17 +260,23 @@ class MedicineDeliveryController extends Controller
                 ]);
             }
 
-            $cart->items()->delete();
+            if (! $isBkashCheckout) {
+                $cart->items()->delete();
+            }
+
             return $this->decorateOrder($order->load('items'));
         });
 
-        if ($paymentMethod === 'bkash_tokenized') {
+        if ($isBkashCheckout) {
             $order = $this->beginBkashPayment($order);
+        } else {
+            $this->dispatchOrderToNearbyRiders($order);
         }
 
-        $this->dispatchOrderToNearbyRiders($order);
-
-        return response()->json(['message' => 'Order placed', 'order' => $order], 201);
+        return response()->json([
+            'message' => $isBkashCheckout ? 'Payment started' : 'Order placed',
+            'order' => $order,
+        ], 201);
     }
 
     public function orders(Request $request): JsonResponse
@@ -274,6 +284,7 @@ class MedicineDeliveryController extends Controller
         $orders = MedicineOrder::query()
             ->with('items', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
             ->where('user_id', $request->user()->id)
+            ->where('status', '!=', 'payment_pending')
             ->latest()
             ->paginate(20);
         $orders->setCollection($orders->getCollection()->map(fn (MedicineOrder $order) => $this->decorateOrder($order)));
@@ -360,6 +371,7 @@ class MedicineDeliveryController extends Controller
 
         $payload = app(BkashTokenizedCheckoutService::class)->executePayment($order, $settings, $data['payment_id'] ?? null);
         $this->applyBkashPaymentResult($order, $payload, $data['transaction_id'] ?? null);
+        $this->finalizePaidBkashOrder($order);
 
         return response()->json([
             'message' => $order->payment_status === 'paid' ? 'bKash payment completed.' : 'bKash payment is not completed yet.',
@@ -386,6 +398,7 @@ class MedicineDeliveryController extends Controller
                 $settings = MedicinePaymentSetting::current();
                 $payload = app(BkashTokenizedCheckoutService::class)->executePayment($order, $settings, $paymentId);
                 $this->applyBkashPaymentResult($order, $payload);
+                $this->finalizePaidBkashOrder($order);
             } catch (\Throwable $e) {
                 Log::error('bKash callback execute failed', [
                     'order_id' => $order->id,
@@ -668,8 +681,22 @@ class MedicineDeliveryController extends Controller
             'manual_transaction_id' => $trxId ?: $order->manual_transaction_id,
             'bkash_raw' => $payload,
             'payment_status' => $isPaid ? 'paid' : $order->payment_status,
+            'status' => $isPaid && $order->status === 'payment_pending' ? 'pending' : $order->status,
             'bkash_paid_at' => $isPaid ? now() : $order->bkash_paid_at,
         ])->save();
+    }
+
+    private function finalizePaidBkashOrder(MedicineOrder $order): void
+    {
+        $order->refresh();
+        if ($order->payment_method !== 'bkash_tokenized' || $order->payment_status !== 'paid') {
+            return;
+        }
+
+        $cart = MedicineCart::query()->where('user_id', $order->user_id)->first();
+        $cart?->items()->delete();
+
+        $this->dispatchOrderToNearbyRiders($order);
     }
 
     private function dispatchOrderToNearbyRiders(MedicineOrder $order): void
@@ -685,56 +712,63 @@ class MedicineDeliveryController extends Controller
         $originLng = $settings->store_lng !== null
             ? (float) $settings->store_lng
             : ($settings->municipality_center_lng !== null ? (float) $settings->municipality_center_lng : null);
-        if ($originLat === null || $originLng === null) {
-            Log::info('Medicine rider dispatch skipped: pickup origin missing', ['order_id' => $order->id]);
-            return;
-        }
-
-        $radiusKm = 20.0;
         $riders = Rider::query()
             ->where('kyc_status', 'approved')
             ->where('account_status', 'active')
             ->where('agreement_accepted', true)
-            ->where('availability_status', 'online')
-            ->whereNotNull('last_lat')
-            ->whereNotNull('last_lng')
             ->get()
             ->map(function (Rider $rider) use ($originLat, $originLng): Rider {
-                $rider->dispatch_distance_km = $this->distanceKm($originLat, $originLng, (float) $rider->last_lat, (float) $rider->last_lng);
+                $rider->dispatch_distance_km = $originLat !== null
+                    && $originLng !== null
+                    && $rider->last_lat !== null
+                    && $rider->last_lng !== null
+                        ? $this->distanceKm($originLat, $originLng, (float) $rider->last_lat, (float) $rider->last_lng)
+                        : null;
                 return $rider;
             })
-            ->filter(fn (Rider $rider) => $rider->dispatch_distance_km <= $radiusKm)
-            ->sortBy('dispatch_distance_km')
+            ->sortBy(fn (Rider $rider) => $rider->dispatch_distance_km ?? PHP_FLOAT_MAX)
             ->values();
 
         if ($riders->isEmpty()) {
-            Log::info('Medicine rider dispatch skipped: no nearby online riders', ['order_id' => $order->id]);
+            Log::info('Medicine rider dispatch skipped: no approved riders', ['order_id' => $order->id]);
             return;
         }
 
+        $notifyRiderIds = [];
         foreach ($riders as $rider) {
+            $existing = RiderOrderRequest::query()
+                ->where('medicine_order_id', $order->id)
+                ->where('rider_id', $rider->id)
+                ->first();
+
             RiderOrderRequest::query()->updateOrCreate(
                 ['medicine_order_id' => $order->id, 'rider_id' => $rider->id],
                 [
                     'food_order_id' => null,
-                    'distance_km' => round((float) $rider->dispatch_distance_km, 2),
+                    'distance_km' => $rider->dispatch_distance_km === null
+                        ? null
+                        : round((float) $rider->dispatch_distance_km, 2),
                     'restaurant_lat' => $originLat,
                     'restaurant_lng' => $originLng,
                     'status' => 'pending',
                     'notified_at' => now(),
-                    'expires_at' => now()->addMinutes(15),
+                    'expires_at' => null,
                     'reject_reason' => null,
                 ]
             );
+
+            if (! $existing || $existing->status !== 'pending') {
+                $notifyRiderIds[] = $rider->id;
+            }
         }
 
         Log::info('Medicine rider dispatch requests created', [
             'order_id' => $order->id,
             'rider_count' => $riders->count(),
-            'radius_km' => $radiusKm,
+            'broadcast' => true,
         ]);
 
-        $this->notifyRidersForOrder($order, $riders->pluck('id')->all());
+        $this->notifyRidersForOrder($order, $notifyRiderIds);
     }
 
     private function notifyRidersForOrder(MedicineOrder $order, array $riderIds): void

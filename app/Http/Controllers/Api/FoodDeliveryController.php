@@ -11,6 +11,7 @@ use App\Models\FoodCart;
 use App\Models\FoodCartItem;
 use App\Models\FoodCategory;
 use App\Models\FoodCoupon;
+use App\Models\FoodCouponRedemption;
 use App\Models\FoodDeliverySetting;
 use App\Models\FoodFavorite;
 use App\Models\FoodItem;
@@ -35,17 +36,34 @@ class FoodDeliveryController extends Controller
 {
     public function home(Request $request): JsonResponse
     {
+        $promotedItems = FoodItem::query()
+            ->with('restaurant:id,name,address,phone')
+            ->where('status', 'active')
+            ->where('is_available', true)
+            ->where($this->activePromotionFilter())
+            ->whereHas('restaurant', fn ($query) => $this->availableRestaurantFilter($query))
+            ->orderByDesc('promotion_priority')
+            ->orderByDesc('id')
+            ->limit(12)
+            ->get();
+
         $popularItems = FoodItem::query()
             ->with('restaurant:id,name,address,phone')
             ->where('status', 'active')
             ->where('is_available', true)
-            ->where(function ($query): void {
-                $query->where('is_promoted', true)->orWhere('is_popular', true);
-            })
+            ->whereHas('restaurant', fn ($query) => $this->availableRestaurantFilter($query))
+            ->where('is_popular', true)
+            ->orderByDesc('promotion_priority')
             ->orderByDesc('is_promoted')
-            ->inRandomOrder()
+            ->orderByDesc('id')
             ->limit(16)
             ->get();
+
+        $featuredRestaurants = $this->restaurantQuery($request)
+            ->where($this->activePromotionFilter())
+            ->limit(10)
+            ->get()
+            ->map(fn ($r) => $this->decorateRestaurant($r, $request));
 
         $banners = FoodBanner::query()
             ->where('is_active', true)
@@ -63,7 +81,9 @@ class FoodDeliveryController extends Controller
         return response()->json([
             'categories' => FoodCategory::query()->where('is_active', true)->orderBy('sort_order')->orderBy('name')->get(),
             'banners' => $this->decorateFoodBanners($banners, $request),
+            'featured_restaurants' => $featuredRestaurants,
             'restaurants' => $this->restaurantQuery($request)->limit(12)->get()->map(fn ($r) => $this->decorateRestaurant($r, $request)),
+            'promoted_items' => $this->decorateFoodItems($promotedItems),
             'popular_items' => $this->decorateFoodItems($popularItems),
             'offers' => FoodCoupon::query()->where('is_active', true)->latest()->limit(10)->get(),
             'areas' => ['Bhola Sadar', 'Borhanuddin', 'Daulatkhan', 'Lalmohan', 'Char Fasson', 'Tazumuddin', 'Manpura', 'Ilisha', 'Bangla Bazar', 'Ukil Para', 'Sadar Road', 'Notun Bazar', 'Launch Ghat'],
@@ -87,8 +107,10 @@ class FoodDeliveryController extends Controller
         $items = FoodItem::query()
             ->where('restaurant_id', $id)
             ->where('status', 'active')
-            ->orderByDesc('is_promoted')
-            ->inRandomOrder()
+            ->orderByRaw($this->promotionOrderSql().' desc')
+            ->orderByDesc('promotion_priority')
+            ->orderByDesc('is_popular')
+            ->orderBy('name')
             ->get();
         $restaurant->menu_categories = FoodCategory::query()
             ->whereIn('id', $items->pluck('food_category_id')->filter()->unique())
@@ -132,8 +154,10 @@ class FoodDeliveryController extends Controller
                 });
             })
             ->when($request->filled('category_id'), fn ($q) => $q->where('food_category_id', (int) $request->query('category_id')))
-            ->orderByDesc('is_promoted')
-            ->inRandomOrder()
+            ->orderByRaw($this->promotionOrderSql().' desc')
+            ->orderByDesc('promotion_priority')
+            ->orderByDesc('is_popular')
+            ->orderByDesc('id')
             ->paginate((int) min(max((int) $request->query('per_page', 30), 1), 100));
 
         $items->setCollection($this->decorateFoodItems($items->getCollection()));
@@ -337,6 +361,72 @@ class FoodDeliveryController extends Controller
         return response()->json($orders);
     }
 
+    public function ownerSettlement(Request $request): JsonResponse
+    {
+        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+        $orders = FoodOrder::query()
+            ->with('restaurant:id,name,settlement_cycle')
+            ->whereIn('restaurant_id', $restaurantIds)
+            ->where('status', 'delivered')
+            ->latest('delivered_at')
+            ->latest()
+            ->limit(150)
+            ->get();
+
+        $rows = $orders->map(function (FoodOrder $order): array {
+            $itemsTotal = (float) $order->items_total;
+            $commission = (float) ($order->restaurant_commission_amount ?? 0);
+            $restaurantDiscount = (float) ($order->restaurant_discount_amount ?? 0);
+            $ownerPayable = (float) ($order->restaurant_owner_payable ?? 0);
+            $ownerReceived = in_array($order->payment_method, ['manual_bkash', 'manual_nagad'], true)
+                ? (float) ($order->grand_total ?? 0)
+                : 0.0;
+
+            return [
+                'id' => $order->id,
+                'order_no' => $order->order_no,
+                'restaurant_id' => $order->restaurant_id,
+                'restaurant_name' => $order->restaurant?->name,
+                'payment_method' => $order->payment_method,
+                'payment_status' => $order->payment_status,
+                'items_total' => $itemsTotal,
+                'restaurant_commission_type' => $order->restaurant_commission_type,
+                'restaurant_commission_rate' => (float) ($order->restaurant_commission_rate ?? 0),
+                'restaurant_commission_fixed_fee' => (float) ($order->restaurant_commission_fixed_fee ?? 0),
+                'restaurant_commission_amount' => $commission,
+                'restaurant_discount_amount' => $restaurantDiscount,
+                'admin_discount_amount' => (float) ($order->admin_discount_amount ?? 0),
+                'restaurant_owner_payable' => $ownerPayable,
+                'owner_received_amount' => round($ownerReceived, 2),
+                'owner_net_due_amount' => round($ownerPayable - $ownerReceived, 2),
+                'admin_receivable_amount' => round(max(0, $ownerReceived - $ownerPayable), 2),
+                'grand_total' => (float) ($order->grand_total ?? 0),
+                'delivery_fee' => (float) ($order->delivery_fee ?? 0),
+                'restaurant_payout_status' => $order->restaurant_payout_status ?? 'pending',
+                'restaurant_payout_reference' => $order->restaurant_payout_reference,
+                'restaurant_paid_out_at' => $order->restaurant_paid_out_at,
+                'delivered_at' => $order->delivered_at ?? $order->updated_at,
+            ];
+        })->values();
+
+        return response()->json([
+            'summary' => [
+                'orders_count' => $rows->count(),
+                'items_total' => round((float) $rows->sum('items_total'), 2),
+                'commission_total' => round((float) $rows->sum('restaurant_commission_amount'), 2),
+                'restaurant_discount_total' => round((float) $rows->sum('restaurant_discount_amount'), 2),
+                'admin_discount_total' => round((float) $rows->sum('admin_discount_amount'), 2),
+                'owner_payable_total' => round((float) $rows->sum('restaurant_owner_payable'), 2),
+                'paid_out_total' => round((float) $rows->where('restaurant_payout_status', 'paid')->sum('restaurant_owner_payable'), 2),
+                'pending_payout_total' => round((float) $rows->where('restaurant_payout_status', '!=', 'paid')->sum('restaurant_owner_payable'), 2),
+                'owner_received_total' => round((float) $rows->sum('owner_received_amount'), 2),
+                'owner_net_due_total' => round((float) $rows->sum('owner_net_due_amount'), 2),
+                'admin_receivable_total' => round((float) $rows->sum('admin_receivable_amount'), 2),
+            ],
+            'orders' => $rows,
+        ]);
+    }
+
     public function addresses(Request $request): JsonResponse
     {
         return response()->json(FoodAddress::query()->where('user_id', $request->user()->id)->latest('is_default')->latest()->get());
@@ -492,15 +582,33 @@ class FoodDeliveryController extends Controller
             $charge['distance_km'] = $this->orderRouteDistance($cart->restaurant, (float) $data['delivery_lat'], (float) $data['delivery_lng']);
         }
         $deliveryFee = $charge['fee'];
-        [$discount, $coupon] = $this->couponDiscount($data['coupon_code'] ?? null, $itemsTotal, $deliveryFee, $cart->restaurant_id);
+        $couponResult = $this->couponDiscount(
+            $data['coupon_code'] ?? null,
+            $itemsTotal,
+            $deliveryFee,
+            $cart->restaurant_id,
+            $request->user()->id,
+            true,
+        );
+        if (! empty($data['coupon_code']) && ! $couponResult['valid']) {
+            abort(422, $couponResult['message']);
+        }
+        $discount = $couponResult['discount_amount'];
+        $coupon = $couponResult['coupon'];
         $grand = max(0, $itemsTotal + $deliveryFee - $discount);
-        $commission = $this->restaurantCommission($cart->restaurant, $itemsTotal);
+        $restaurantItemDiscount = (float) ($couponResult['restaurant_item_discount_amount'] ?? 0);
+        $restaurantDeliveryDiscount = (float) ($couponResult['restaurant_delivery_discount_amount'] ?? 0);
+        $commission = $this->restaurantCommission(
+            $cart->restaurant,
+            max(0, $itemsTotal - $restaurantItemDiscount),
+            $restaurantDeliveryDiscount,
+        );
 
         $proofPhotoPath = $request->hasFile('payment_proof_photo')
             ? $request->file('payment_proof_photo')->store('food/payment-proofs', 'public')
             : null;
 
-        $order = DB::transaction(function () use ($request, $cart, $address, $data, $itemsTotal, $deliveryFee, $discount, $coupon, $grand, $charge, $paymentMethod, $proofPhotoPath, $commission) {
+        $order = DB::transaction(function () use ($request, $cart, $address, $data, $itemsTotal, $deliveryFee, $discount, $coupon, $couponResult, $grand, $charge, $paymentMethod, $proofPhotoPath, $commission) {
             $order = FoodOrder::query()->create([
                 'order_no' => 'FD-' . now()->format('ymd') . '-' . strtoupper(Str::random(6)),
                 'user_id' => $request->user()->id,
@@ -532,11 +640,31 @@ class FoodDeliveryController extends Controller
                 'delivery_distance_km' => $charge['distance_km'],
                 'delivery_charge_mode' => $charge['mode'],
                 'discount_amount' => $discount,
+                'admin_discount_amount' => $couponResult['admin_discount_amount'],
+                'restaurant_discount_amount' => $couponResult['restaurant_discount_amount'],
+                'delivery_discount_amount' => $couponResult['delivery_discount_amount'],
+                'discount_breakdown' => $couponResult['breakdown'],
                 'grand_total' => $grand,
                 'coupon_code' => $coupon?->code,
+                'coupon_id' => $coupon?->id,
+                'coupon_title' => $coupon?->title,
                 'order_note' => $data['order_note'] ?? null,
                 'estimated_delivery_at' => now()->addMinutes(45),
             ]);
+            if ($coupon && $discount > 0) {
+                FoodCouponRedemption::query()->create([
+                    'food_coupon_id' => $coupon->id,
+                    'food_order_id' => $order->id,
+                    'user_id' => $request->user()->id,
+                    'restaurant_id' => $cart->restaurant_id,
+                    'discount_amount' => $couponResult['discount_amount'],
+                    'admin_discount_amount' => $couponResult['admin_discount_amount'],
+                    'restaurant_discount_amount' => $couponResult['restaurant_discount_amount'],
+                    'delivery_discount_amount' => $couponResult['delivery_discount_amount'],
+                    'breakdown' => $couponResult['breakdown'],
+                ]);
+                $coupon->increment('used_count');
+            }
             foreach ($cart->items as $row) {
                 $imageUrl = MediaLookup::primaryUrlMap('food_item', [(int) $row->food_item_id])[(int) $row->food_item_id] ?? null;
                 $itemPayload = [
@@ -596,6 +724,77 @@ class FoodDeliveryController extends Controller
             'delivery_charge_mode' => $charge['mode'],
             'delivery_charge_label' => $charge['label'] ?? null,
             'grand_total' => round($itemsTotal + (float) $charge['fee'], 2),
+        ]);
+    }
+
+    public function couponPreview(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'coupon_code' => ['required', 'string', 'max:40'],
+            'delivery_lat' => ['nullable', 'numeric', 'between:-90,90'],
+            'delivery_lng' => ['nullable', 'numeric', 'between:-180,180'],
+        ]);
+
+        $cart = FoodCart::query()
+            ->with(['items', 'restaurant'])
+            ->where('user_id', $request->user()->id)
+            ->firstOrFail();
+        abort_if($cart->items->isEmpty(), 422, 'Cart is empty.');
+
+        $itemsTotal = (float) $cart->items->sum('total_price');
+        $charge = ['fee' => 0, 'distance_km' => null, 'mode' => 'pickup', 'label' => null];
+        if (isset($data['delivery_lat'], $data['delivery_lng'])) {
+            $charge = $this->deliveryCharge(
+                $cart->restaurant,
+                null,
+                (float) $data['delivery_lat'],
+                (float) $data['delivery_lng'],
+                $itemsTotal,
+            );
+            if ($charge['distance_km'] === null) {
+                $charge['distance_km'] = $this->orderRouteDistance($cart->restaurant, (float) $data['delivery_lat'], (float) $data['delivery_lng']);
+            }
+        } else {
+            $payload = $this->cartPayload($request->user()->id);
+            $charge['fee'] = (float) ($payload['delivery_fee'] ?? 0);
+            $charge['distance_km'] = $payload['delivery_distance_km'] ?? null;
+            $charge['mode'] = $payload['delivery_charge_mode'] ?? null;
+            $charge['label'] = $payload['delivery_charge_label'] ?? null;
+        }
+
+        $deliveryFee = (float) ($charge['fee'] ?? 0);
+        $couponResult = $this->couponDiscount(
+            $data['coupon_code'],
+            $itemsTotal,
+            $deliveryFee,
+            $cart->restaurant_id,
+            $request->user()->id,
+            false,
+        );
+
+        if (! $couponResult['valid']) {
+            return response()->json($couponResult + [
+                'items_total' => round($itemsTotal, 2),
+                'delivery_fee' => round($deliveryFee, 2),
+                'grand_total' => round($itemsTotal + $deliveryFee, 2),
+            ], 422);
+        }
+
+        return response()->json([
+            'valid' => true,
+            'message' => $couponResult['message'],
+            'coupon' => $couponResult['coupon'],
+            'discount_amount' => $couponResult['discount_amount'],
+            'admin_discount_amount' => $couponResult['admin_discount_amount'],
+            'restaurant_discount_amount' => $couponResult['restaurant_discount_amount'],
+            'delivery_discount_amount' => $couponResult['delivery_discount_amount'],
+            'discount_breakdown' => $couponResult['breakdown'],
+            'items_total' => round($itemsTotal, 2),
+            'delivery_fee' => round($deliveryFee, 2),
+            'delivery_distance_km' => $charge['distance_km'],
+            'delivery_charge_mode' => $charge['mode'],
+            'delivery_charge_label' => $charge['label'] ?? null,
+            'grand_total' => round(max(0, $itemsTotal + $deliveryFee - $couponResult['discount_amount']), 2),
         ]);
     }
 
@@ -802,6 +1001,88 @@ class FoodDeliveryController extends Controller
         return response()->json($reviews);
     }
 
+    public function ownerCoupons(Request $request): JsonResponse
+    {
+        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+
+        return response()->json([
+            'data' => FoodCoupon::query()
+                ->whereIn('restaurant_id', $restaurantIds)
+                ->latest()
+                ->paginate(50)
+                ->items(),
+        ]);
+    }
+
+    public function saveOwnerCoupon(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'id' => ['nullable', 'integer'],
+            'restaurant_id' => ['required', 'exists:restaurants,id'],
+            'code' => ['required', 'string', 'max:40'],
+            'title' => ['required', 'string', 'max:120'],
+            'discount_type' => ['required', 'in:fixed,percent,free_delivery'],
+            'discount_value' => ['nullable', 'numeric', 'min:0'],
+            'max_discount' => ['nullable', 'numeric', 'min:0'],
+            'minimum_order' => ['nullable', 'numeric', 'min:0'],
+            'usage_limit' => ['nullable', 'integer', 'min:1'],
+            'per_user_limit' => ['nullable', 'integer', 'min:1'],
+            'starts_at' => ['nullable', 'date'],
+            'ends_at' => ['nullable', 'date'],
+            'is_active' => ['nullable', 'boolean'],
+            'notes' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $restaurant = $this->ownedRestaurant($request, (int) $data['restaurant_id']);
+        $code = strtoupper(trim($data['code']));
+        $exists = FoodCoupon::query()
+            ->where('code', $code)
+            ->when(! empty($data['id']), fn ($query) => $query->where('id', '!=', (int) $data['id']))
+            ->exists();
+        abort_if($exists, 422, 'এই coupon code আগে থেকেই আছে।');
+
+        $coupon = ! empty($data['id'])
+            ? FoodCoupon::query()
+                ->where('restaurant_id', $restaurant->id)
+                ->where('owner_user_id', $request->user()->id)
+                ->findOrFail((int) $data['id'])
+            : new FoodCoupon();
+
+        $coupon->fill([
+            'restaurant_id' => $restaurant->id,
+            'owner_user_id' => $request->user()->id,
+            'source' => 'restaurant',
+            'funding_source' => 'restaurant',
+            'applies_to' => ($data['discount_type'] ?? 'fixed') === 'free_delivery' ? 'delivery' : 'order_items',
+            'code' => $code,
+            'title' => $data['title'],
+            'discount_type' => $data['discount_type'],
+            'discount_value' => $data['discount_type'] === 'free_delivery' ? 0 : (float) ($data['discount_value'] ?? 0),
+            'max_discount' => $data['max_discount'] ?? null,
+            'minimum_order' => $data['minimum_order'] ?? 0,
+            'usage_limit' => $data['usage_limit'] ?? null,
+            'per_user_limit' => $data['per_user_limit'] ?? 1,
+            'starts_at' => $data['starts_at'] ?? null,
+            'ends_at' => $data['ends_at'] ?? null,
+            'is_active' => $data['is_active'] ?? true,
+            'notes' => $data['notes'] ?? null,
+        ])->save();
+
+        return response()->json(['message' => 'Coupon saved', 'coupon' => $coupon]);
+    }
+
+    public function deleteOwnerCoupon(Request $request, int $id): JsonResponse
+    {
+        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+        FoodCoupon::query()
+            ->whereIn('restaurant_id', $restaurantIds)
+            ->where('source', 'restaurant')
+            ->findOrFail($id)
+            ->delete();
+
+        return response()->json(['message' => 'Coupon deleted']);
+    }
+
     public function ownerReplyReview(Request $request, int $id): JsonResponse
     {
         $data = $request->validate([
@@ -822,11 +1103,7 @@ class FoodDeliveryController extends Controller
     private function restaurantQuery(Request $request)
     {
         return Restaurant::query()
-            ->where('status', 'active')
-            ->where('delivery_available', true)
-            ->where(function ($q) {
-                $q->whereNull('accepts_food_orders')->orWhere('accepts_food_orders', true);
-            })
+            ->where(fn ($query) => $this->availableRestaurantFilter($query))
             ->when($request->filled('q'), fn ($q) => $q->where('name', 'like', '%' . $request->query('q') . '%'))
             ->when($request->filled('area'), fn ($q) => $q->where(function ($sub) use ($request) {
                 $term = '%' . $request->query('area') . '%';
@@ -835,8 +1112,37 @@ class FoodDeliveryController extends Controller
             ->when($request->filled('category_id'), fn ($q) => $q->where('category_id', (int) $request->query('category_id')))
             ->when($request->filled('min_price'), fn ($q) => $q->where('min_price', '>=', (int) $request->query('min_price')))
             ->when($request->filled('max_price'), fn ($q) => $q->where('max_price', '<=', (int) $request->query('max_price')))
+            ->orderByRaw($this->promotionOrderSql().' desc')
+            ->orderByDesc('promotion_priority')
             ->orderByDesc('rating')
             ->orderByDesc('id');
+    }
+
+    private function availableRestaurantFilter($query): void
+    {
+        $query->where('status', 'active')
+            ->where('delivery_available', true)
+            ->where(function ($q) {
+                $q->whereNull('accepts_food_orders')->orWhere('accepts_food_orders', true);
+            });
+    }
+
+    private function activePromotionFilter(): \Closure
+    {
+        return function ($query): void {
+            $query->where('is_promoted', true)
+                ->where(function ($q): void {
+                    $q->whereNull('promotion_starts_at')->orWhere('promotion_starts_at', '<=', now());
+                })
+                ->where(function ($q): void {
+                    $q->whereNull('promotion_ends_at')->orWhere('promotion_ends_at', '>=', now());
+                });
+        };
+    }
+
+    private function promotionOrderSql(): string
+    {
+        return "case when is_promoted = 1 and (promotion_starts_at is null or promotion_starts_at <= now()) and (promotion_ends_at is null or promotion_ends_at >= now()) then 1 else 0 end";
     }
 
     private function foodReviewQuery()
@@ -852,6 +1158,10 @@ class FoodDeliveryController extends Controller
         $restaurant->delivery_time = '৩০-৫০ মিনিট';
         $restaurant->minimum_order = $restaurant->min_price ?: null;
         $restaurant->is_open = true;
+        $restaurant->is_currently_promoted = $this->isCurrentlyPromoted($restaurant);
+        $restaurant->promotion_label = $restaurant->is_currently_promoted
+            ? ($restaurant->promotion_badge ?: 'Featured')
+            : null;
         $restaurant->payment_options = $this->restaurantPaymentOptions($restaurant);
         return $restaurant;
     }
@@ -864,6 +1174,10 @@ class FoodDeliveryController extends Controller
             : null;
         $restaurant->menu_items_count = FoodItem::query()->where('restaurant_id', $restaurant->id)->count();
         $restaurant->pending_orders_count = FoodOrder::query()->where('restaurant_id', $restaurant->id)->where('status', 'pending')->count();
+        $restaurant->is_currently_promoted = $this->isCurrentlyPromoted($restaurant);
+        $restaurant->promotion_label = $restaurant->is_currently_promoted
+            ? ($restaurant->promotion_badge ?: 'Featured')
+            : null;
         $restaurant->payment_options = $this->restaurantPaymentOptions($restaurant);
         return $restaurant;
     }
@@ -920,6 +1234,8 @@ class FoodDeliveryController extends Controller
         $item->image_url = MediaLookup::primaryUrlMap('food_item', [$item->id])[$item->id] ?? null;
         $item->size_options = $this->normalizeSizeOptions($item->size_options ?? [], (float) ($item->discount_price ?: $item->price));
         $item->spice_options = $this->cleanStringOptions($item->spice_options ?? []);
+        $item->is_currently_promoted = $this->isCurrentlyPromoted($item);
+        $item->promotion_label = $item->is_currently_promoted ? ($item->promotion_badge ?: 'Promoted') : null;
         return $item;
     }
 
@@ -930,8 +1246,27 @@ class FoodDeliveryController extends Controller
             $item->image_url = $imageMap[$item->id] ?? null;
             $item->size_options = $this->normalizeSizeOptions($item->size_options ?? [], (float) ($item->discount_price ?: $item->price));
             $item->spice_options = $this->cleanStringOptions($item->spice_options ?? []);
+            $item->is_currently_promoted = $this->isCurrentlyPromoted($item);
+            $item->promotion_label = $item->is_currently_promoted ? ($item->promotion_badge ?: 'Promoted') : null;
             return $item;
         });
+    }
+
+    private function isCurrentlyPromoted(Restaurant|FoodItem $record): bool
+    {
+        if (! $record->is_promoted) {
+            return false;
+        }
+
+        if ($record->promotion_starts_at && $record->promotion_starts_at->isFuture()) {
+            return false;
+        }
+
+        if ($record->promotion_ends_at && $record->promotion_ends_at->isPast()) {
+            return false;
+        }
+
+        return true;
     }
 
     private function unitPriceForSize(FoodItem $item, ?string $size): float
@@ -1117,7 +1452,7 @@ class FoodDeliveryController extends Controller
         return ['fee' => round($fee, 2), 'distance_km' => $distanceKm === null ? null : round($distanceKm, 2), 'mode' => 'per_km'];
     }
 
-    private function restaurantCommission(?Restaurant $restaurant, float $itemsTotal): array
+    private function restaurantCommission(?Restaurant $restaurant, float $itemsTotal, float $extraRestaurantDeduction = 0): array
     {
         $enabled = (bool) ($restaurant?->commission_enabled ?? true);
         $type = $enabled ? (string) ($restaurant?->commission_type ?? 'percentage') : 'none';
@@ -1137,7 +1472,7 @@ class FoodDeliveryController extends Controller
             'rate' => round($rate, 2),
             'fixed_fee' => round($fixedFee, 2),
             'amount' => $amount,
-            'owner_payable' => round(max(0, $itemsTotal - $amount), 2),
+            'owner_payable' => round(max(0, $itemsTotal - $amount - $extraRestaurantDeduction), 2),
         ];
     }
 
@@ -1235,18 +1570,120 @@ class FoodDeliveryController extends Controller
         return 'https://www.google.com/maps/search/?api=1&query=' . $lat . ',' . $lng;
     }
 
-    private function couponDiscount(?string $code, float $itemsTotal, float $deliveryFee, int $restaurantId): array
+    private function couponDiscount(?string $code, float $itemsTotal, float $deliveryFee, int $restaurantId, int $userId, bool $forCheckout): array
     {
-        if (! $code) return [0, null];
-        $coupon = FoodCoupon::query()->where('code', strtoupper($code))->where('is_active', true)
-            ->where(fn ($q) => $q->whereNull('restaurant_id')->orWhere('restaurant_id', $restaurantId))->first();
-        if (! $coupon || $itemsTotal < (float) $coupon->minimum_order) return [0, null];
-        $discount = match ($coupon->discount_type) {
-            'percent' => $itemsTotal * ((float) $coupon->discount_value / 100),
+        $empty = [
+            'valid' => false,
+            'message' => 'Coupon code দিন।',
+            'coupon' => null,
+            'discount_amount' => 0.0,
+            'admin_discount_amount' => 0.0,
+            'restaurant_discount_amount' => 0.0,
+            'restaurant_item_discount_amount' => 0.0,
+            'restaurant_delivery_discount_amount' => 0.0,
+            'delivery_discount_amount' => 0.0,
+            'breakdown' => null,
+        ];
+        $normalizedCode = strtoupper(trim((string) $code));
+        if ($normalizedCode === '') {
+            return $empty;
+        }
+
+        $coupon = FoodCoupon::query()
+            ->where('code', $normalizedCode)
+            ->where('is_active', true)
+            ->where(function ($query) use ($restaurantId): void {
+                $query->whereNull('restaurant_id')->orWhere('restaurant_id', $restaurantId);
+            })
+            ->where(function ($query): void {
+                $query->whereNull('starts_at')->orWhere('starts_at', '<=', now());
+            })
+            ->where(function ($query): void {
+                $query->whereNull('ends_at')->orWhere('ends_at', '>=', now());
+            })
+            ->orderByRaw('restaurant_id is null')
+            ->first();
+
+        if (! $coupon) {
+            return array_replace($empty, ['message' => 'Coupon টি পাওয়া যায়নি বা মেয়াদ শেষ।']);
+        }
+
+        if ($itemsTotal < (float) $coupon->minimum_order) {
+            return array_replace($empty, [
+                'coupon' => $coupon,
+                'message' => 'এই coupon ব্যবহার করতে কমপক্ষে ৳' . round((float) $coupon->minimum_order, 2) . ' অর্ডার লাগবে।',
+            ]);
+        }
+
+        if ($coupon->usage_limit !== null && (int) $coupon->used_count >= (int) $coupon->usage_limit) {
+            return array_replace($empty, ['coupon' => $coupon, 'message' => 'এই coupon এর limit শেষ।']);
+        }
+
+        if ($coupon->per_user_limit !== null) {
+            $usedByUser = FoodCouponRedemption::query()
+                ->where('food_coupon_id', $coupon->id)
+                ->where('user_id', $userId)
+                ->count();
+            if ($usedByUser >= (int) $coupon->per_user_limit) {
+                return array_replace($empty, ['coupon' => $coupon, 'message' => 'এই coupon আপনি আগেই ব্যবহার করেছেন।']);
+            }
+        }
+
+        $appliesTo = (string) ($coupon->applies_to ?: 'order_items');
+        $basis = match ($appliesTo) {
+            'delivery' => $deliveryFee,
+            'total' => $itemsTotal + $deliveryFee,
+            default => $itemsTotal,
+        };
+        $rawDiscount = match ($coupon->discount_type) {
+            'percent' => $basis * ((float) $coupon->discount_value / 100),
             'free_delivery' => $deliveryFee,
             default => (float) $coupon->discount_value,
         };
-        return [min($discount, $itemsTotal + $deliveryFee), $coupon];
+        if ($coupon->max_discount !== null && (float) $coupon->max_discount > 0) {
+            $rawDiscount = min($rawDiscount, (float) $coupon->max_discount);
+        }
+
+        $discount = round(min(max(0, $rawDiscount), $itemsTotal + $deliveryFee), 2);
+        if ($discount <= 0) {
+            return array_replace($empty, ['coupon' => $coupon, 'message' => 'এই অর্ডারে coupon discount প্রযোজ্য নয়।']);
+        }
+
+        $deliveryDiscount = $coupon->discount_type === 'free_delivery' || $appliesTo === 'delivery'
+            ? min($discount, $deliveryFee)
+            : 0.0;
+        $itemDiscount = round(max(0, $discount - $deliveryDiscount), 2);
+        $fundingSource = (string) ($coupon->funding_source ?: ($coupon->restaurant_id ? 'restaurant' : 'admin'));
+        $adminDiscount = $fundingSource === 'restaurant' ? 0.0 : $discount;
+        $restaurantDiscount = $fundingSource === 'restaurant' ? $discount : 0.0;
+
+        return [
+            'valid' => true,
+            'message' => $forCheckout ? 'Coupon applied.' : 'Coupon প্রযোজ্য হয়েছে।',
+            'coupon' => $coupon,
+            'discount_amount' => $discount,
+            'admin_discount_amount' => round($adminDiscount, 2),
+            'restaurant_discount_amount' => round($restaurantDiscount, 2),
+            'restaurant_item_discount_amount' => $fundingSource === 'restaurant' ? $itemDiscount : 0.0,
+            'restaurant_delivery_discount_amount' => $fundingSource === 'restaurant' ? round($deliveryDiscount, 2) : 0.0,
+            'delivery_discount_amount' => round($deliveryDiscount, 2),
+            'breakdown' => [
+                'coupon_id' => $coupon->id,
+                'code' => $coupon->code,
+                'title' => $coupon->title,
+                'discount_type' => $coupon->discount_type,
+                'discount_value' => (float) $coupon->discount_value,
+                'max_discount' => $coupon->max_discount === null ? null : (float) $coupon->max_discount,
+                'minimum_order' => (float) $coupon->minimum_order,
+                'applies_to' => $appliesTo,
+                'funding_source' => $fundingSource,
+                'basis_amount' => round($basis, 2),
+                'item_discount_amount' => $itemDiscount,
+                'delivery_discount_amount' => round($deliveryDiscount, 2),
+                'admin_discount_amount' => round($adminDiscount, 2),
+                'restaurant_discount_amount' => round($restaurantDiscount, 2),
+            ],
+        ];
     }
 
     private function statusLabels(): array
@@ -1335,58 +1772,62 @@ class FoodDeliveryController extends Controller
         $restaurant = $order->restaurant;
         $originLat = $restaurant?->lat !== null ? (float) $restaurant->lat : null;
         $originLng = $restaurant?->lng !== null ? (float) $restaurant->lng : null;
-        if ($originLat === null || $originLng === null) {
-            Log::info('Rider dispatch skipped: restaurant location missing', ['order_id' => $order->id]);
-            return;
-        }
-
-        $radiusKm = 20.0;
         $riders = Rider::query()
             ->where('kyc_status', 'approved')
             ->where('account_status', 'active')
             ->where('agreement_accepted', true)
-            ->where('availability_status', 'online')
-            ->whereNotNull('last_lat')
-            ->whereNotNull('last_lng')
-            ->where(function ($query): void {
-                $query->whereNull('last_location_at')->orWhere('last_location_at', '>=', now()->subMinutes(30));
-            })
             ->get()
             ->map(function (Rider $rider) use ($originLat, $originLng): Rider {
-                $rider->dispatch_distance_km = $this->distanceKm($originLat, $originLng, (float) $rider->last_lat, (float) $rider->last_lng);
+                $rider->dispatch_distance_km = $originLat !== null
+                    && $originLng !== null
+                    && $rider->last_lat !== null
+                    && $rider->last_lng !== null
+                        ? $this->distanceKm($originLat, $originLng, (float) $rider->last_lat, (float) $rider->last_lng)
+                        : null;
                 return $rider;
             })
-            ->filter(fn (Rider $rider) => $rider->dispatch_distance_km <= $radiusKm)
-            ->sortBy('dispatch_distance_km')
+            ->sortBy(fn (Rider $rider) => $rider->dispatch_distance_km ?? PHP_FLOAT_MAX)
             ->values();
 
         if ($riders->isEmpty()) {
-            Log::info('Rider dispatch skipped: no nearby online riders', ['order_id' => $order->id]);
+            Log::info('Rider dispatch skipped: no approved riders', ['order_id' => $order->id]);
             return;
         }
 
+        $notifyRiderIds = [];
         foreach ($riders as $rider) {
+            $existing = RiderOrderRequest::query()
+                ->where('food_order_id', $order->id)
+                ->where('rider_id', $rider->id)
+                ->first();
+
             RiderOrderRequest::query()->updateOrCreate(
                 ['food_order_id' => $order->id, 'rider_id' => $rider->id],
                 [
-                    'distance_km' => round((float) $rider->dispatch_distance_km, 2),
+                    'distance_km' => $rider->dispatch_distance_km === null
+                        ? null
+                        : round((float) $rider->dispatch_distance_km, 2),
                     'restaurant_lat' => $originLat,
                     'restaurant_lng' => $originLng,
                     'status' => 'pending',
                     'notified_at' => now(),
-                    'expires_at' => now()->addMinutes(15),
+                    'expires_at' => null,
                     'reject_reason' => null,
                 ]
             );
+
+            if (! $existing || $existing->status !== 'pending') {
+                $notifyRiderIds[] = $rider->id;
+            }
         }
 
         Log::info('Rider dispatch requests created', [
             'order_id' => $order->id,
             'rider_count' => $riders->count(),
-            'radius_km' => $radiusKm,
+            'broadcast' => true,
         ]);
 
-        $this->notifyRidersForOrder($order, $riders->pluck('id')->all());
+        $this->notifyRidersForOrder($order, $notifyRiderIds);
     }
 
     private function notifyRidersForOrder(FoodOrder $order, array $riderIds): void

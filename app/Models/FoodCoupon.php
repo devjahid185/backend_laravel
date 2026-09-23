@@ -12,5 +12,8 @@ class FoodCoupon extends Model
         'is_active' => 'boolean',
         'starts_at' => 'datetime',
         'ends_at' => 'datetime',
+        'discount_value' => 'decimal:2',
+        'max_discount' => 'decimal:2',
+        'minimum_order' => 'decimal:2',
     ];
 }

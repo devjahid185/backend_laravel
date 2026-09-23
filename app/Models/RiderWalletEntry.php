@@ -11,6 +11,7 @@ class RiderWalletEntry extends Model
     protected $casts = [
         'amount' => 'decimal:2',
         'balance_after' => 'decimal:2',
+        'paid_out_at' => 'datetime',
     ];
 
     public function rider()

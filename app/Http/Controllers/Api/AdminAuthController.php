@@ -25,6 +25,11 @@ class AdminAuthController extends Controller
                 'credentials' => ['Invalid credentials.'],
             ]);
         }
+        if (! $admin->is_active) {
+            throw ValidationException::withMessages([
+                'credentials' => ['This staff account is inactive.'],
+            ]);
+        }
 
         $admin->update(['last_login_at' => now()]);
         $token = $admin->createToken('admin-panel', ['admin'])->plainTextToken;

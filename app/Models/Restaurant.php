@@ -16,6 +16,8 @@ class Restaurant extends Model
         'features' => 'array',
         'delivery_available' => 'boolean',
         'accepts_food_orders' => 'boolean',
+        'is_promoted' => 'boolean',
+        'promotion_priority' => 'integer',
         'commission_enabled' => 'boolean',
         'cod_enabled' => 'boolean',
         'takeaway_available' => 'boolean',
@@ -23,6 +25,8 @@ class Restaurant extends Model
         'service_radius_km' => 'decimal:2',
         'commission_rate' => 'decimal:2',
         'commission_fixed_fee' => 'decimal:2',
+        'promotion_starts_at' => 'datetime',
+        'promotion_ends_at' => 'datetime',
     ];
 
     public function foodItems()

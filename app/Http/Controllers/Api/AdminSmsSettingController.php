@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\SmsLog;
 use App\Models\SmsSetting;
 use App\Services\SmsService;
 use Illuminate\Http\JsonResponse;
@@ -17,6 +18,7 @@ class AdminSmsSettingController extends Controller
     {
         return response()->json([
             'settings' => $this->serialize(SmsSetting::current()),
+            'logs' => $this->latestLogs(),
         ]);
     }
 
@@ -45,6 +47,7 @@ class AdminSmsSettingController extends Controller
         return response()->json([
             'message' => 'SMS settings updated successfully.',
             'settings' => $this->serialize(SmsSetting::query()->findOrFail($settings->id)),
+            'logs' => $this->latestLogs(),
         ]);
     }
 
@@ -59,7 +62,7 @@ class AdminSmsSettingController extends Controller
         $message = $validated['message'] ?: 'Bholabashi SMS settings test message.';
 
         try {
-            $sms->send($validated['phone'], $message);
+            $sms->send($validated['phone'], $message, 'admin_test');
             DB::table($settings->getTable())->where('id', $settings->id)->update([
                 'last_tested_at' => now(),
                 'last_test_result' => 'Success',
@@ -69,6 +72,7 @@ class AdminSmsSettingController extends Controller
             return response()->json([
                 'message' => 'Test SMS sent successfully.',
                 'settings' => $this->serialize(SmsSetting::query()->findOrFail($settings->id)),
+                'logs' => $this->latestLogs(),
             ]);
         } catch (\Throwable $e) {
             Log::error('Admin SMS test failed', [
@@ -85,6 +89,7 @@ class AdminSmsSettingController extends Controller
             return response()->json([
                 'message' => $e->getMessage(),
                 'settings' => $this->serialize(SmsSetting::query()->findOrFail($settings->id)),
+                'logs' => $this->latestLogs(),
             ], 422);
         }
     }
@@ -113,5 +118,27 @@ class AdminSmsSettingController extends Controller
         }
 
         return substr($digits, 0, 2).str_repeat('*', max(0, strlen($digits) - 4)).substr($digits, -2);
+    }
+
+    private function latestLogs(): array
+    {
+        return SmsLog::query()
+            ->latest()
+            ->limit(50)
+            ->get()
+            ->map(fn (SmsLog $log) => [
+                'id' => $log->id,
+                'phone' => $log->phone,
+                'purpose' => $log->purpose,
+                'provider' => $log->provider,
+                'sender_id' => $log->sender_id,
+                'status' => $log->status,
+                'http_status' => $log->http_status,
+                'gateway_response' => $log->gateway_response,
+                'error_message' => $log->error_message,
+                'created_at' => $log->created_at,
+                'sent_at' => $log->sent_at,
+            ])
+            ->all();
     }
 }
