@@ -56,10 +56,19 @@ class FacebookPagePublisherService
 
         $response = Http::asForm()->timeout(45)->post($endpoint, $payload);
         if (! $response->successful()) {
-            throw new \RuntimeException($response->json('error.message') ?: $response->body());
+            throw new \RuntimeException($this->friendlyError($response->json('error.message') ?: $response->body()));
         }
 
         return $response->json();
+    }
+
+    private function friendlyError(string $message): string
+    {
+        if (str_contains($message, 'publish_actions')) {
+            return 'Facebook publish failed because this token/app is using deprecated publish_actions. Generate a Page/System User token with pages_manage_posts and pages_read_engagement instead.';
+        }
+
+        return $message;
     }
 
     private function graphUrl(AiSocialSetting $settings, string $path): string

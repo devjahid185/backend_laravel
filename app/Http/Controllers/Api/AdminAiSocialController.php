@@ -262,9 +262,17 @@ class AdminAiSocialController extends Controller
 
     public function publish(AiSocialPost $post, FacebookPagePublisherService $facebook): JsonResponse
     {
+        $post = $this->publishPost($post, $facebook, true);
+        if ($post->status === 'failed') {
+            return response()->json([
+                'message' => $post->failure_message ?: 'Facebook publish failed.',
+                'post' => $post,
+            ], 422);
+        }
+
         return response()->json([
             'message' => 'Facebook publish completed.',
-            'post' => $this->publishPost($post, $facebook, true),
+            'post' => $post,
         ]);
     }
 
