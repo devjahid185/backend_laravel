@@ -13,7 +13,7 @@ return new class extends Migration
             $table->id();
             $table->boolean('is_enabled')->default(false);
             $table->boolean('approval_required')->default(true);
-            $table->string('openai_api_key')->nullable();
+            $table->text('openai_api_key')->nullable();
             $table->string('openai_text_model')->default('gpt-4.1-mini');
             $table->string('openai_image_model')->default('gpt-image-1');
             $table->string('facebook_page_id')->nullable();
