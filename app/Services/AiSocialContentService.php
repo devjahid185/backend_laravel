@@ -19,7 +19,7 @@ class AiSocialContentService
         $sources = [];
         if ($type === 'all' || $type === 'food_item') {
             $items = FoodItem::query()
-                ->with('restaurant:id,name,address,area,status')
+                ->with('restaurant:id,name,address,district,upazila,status')
                 ->where('is_available', true)
                 ->where('status', 'active')
                 ->orderByDesc('is_promoted')
@@ -55,7 +55,7 @@ class AiSocialContentService
                     'source_type' => 'restaurant',
                     'source_id' => $restaurant->id,
                     'title' => $restaurant->name,
-                    'subtitle' => $restaurant->address ?: $restaurant->area,
+                    'subtitle' => $restaurant->address ?: $this->restaurantAreaLabel($restaurant),
                     'image_url' => $images[$restaurant->id] ?? null,
                     'snapshot' => $this->restaurantSnapshot($restaurant, $images[$restaurant->id] ?? null),
                 ];
@@ -230,7 +230,7 @@ class AiSocialContentService
             'type' => 'restaurant',
             'id' => $restaurant->id,
             'title' => $restaurant->name,
-            'area' => $restaurant->area ?? null,
+            'area' => $this->restaurantAreaLabel($restaurant),
             'address' => $restaurant->address,
             'promotion_badge' => $restaurant->promotion_badge,
             'image_url' => $imageUrl,
@@ -269,6 +269,13 @@ class AiSocialContentService
             'image_url' => null,
             'snapshot' => ['type' => 'app_feature', ...$feature],
         ], $features);
+    }
+
+    private function restaurantAreaLabel(Restaurant $restaurant): ?string
+    {
+        return collect([$restaurant->upazila ?? null, $restaurant->district ?? null])
+            ->filter(fn ($value) => filled($value))
+            ->implode(', ') ?: null;
     }
 
     private function extractResponseText(array $payload): ?string
