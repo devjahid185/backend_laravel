@@ -34,6 +34,7 @@ use App\Http\Controllers\Api\DoctorAppointmentController;
 use App\Http\Controllers\Api\DoctorController;
 use App\Http\Controllers\Api\ElectricityOfficeController;
 use App\Http\Controllers\Api\FaqController;
+use App\Http\Controllers\Api\FacebookWebhookController;
 use App\Http\Controllers\Api\FoodDeliveryController;
 use App\Http\Controllers\Api\HomeBannerController;
 use App\Http\Controllers\Api\HomeServiceShortcutController;
@@ -80,6 +81,8 @@ Route::get('/home-service-shortcuts', [HomeServiceShortcutController::class, 'ac
 Route::get('/support-settings', [SupportSettingController::class, 'show']);
 Route::get('/map-settings', [MapSettingController::class, 'show']);
 Route::get('/app-version-check', [AppVersionController::class, 'check']);
+Route::get('/facebook/webhook', [FacebookWebhookController::class, 'verify']);
+Route::post('/facebook/webhook', [FacebookWebhookController::class, 'receive']);
 Route::match(['GET', 'POST'], '/medicine/bkash/callback', [MedicineDeliveryController::class, 'bkashCallback']);
 
 Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
@@ -115,6 +118,10 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::post('/admin/ai-social/posts/{post}/approve', [AdminAiSocialController::class, 'approve'])->whereNumber('post');
     Route::post('/admin/ai-social/posts/{post}/publish', [AdminAiSocialController::class, 'publish'])->whereNumber('post');
     Route::post('/admin/ai-social/publish-due', [AdminAiSocialController::class, 'publishDue']);
+    Route::post('/admin/ai-social/comment-rules', [AdminAiSocialController::class, 'storeCommentRule']);
+    Route::put('/admin/ai-social/comment-rules/{rule}', [AdminAiSocialController::class, 'updateCommentRule'])->whereNumber('rule');
+    Route::delete('/admin/ai-social/comment-rules/{rule}', [AdminAiSocialController::class, 'deleteCommentRule'])->whereNumber('rule');
+    Route::post('/admin/ai-social/facebook-comments/{comment}/reply', [AdminAiSocialController::class, 'sendCommentReplies'])->whereNumber('comment');
     Route::get('/admin/map-settings', [AdminMapSettingController::class, 'show']);
     Route::put('/admin/map-settings', [AdminMapSettingController::class, 'update']);
     Route::get('/admin/rider-settings', [AdminRiderSettingController::class, 'show']);

@@ -63,6 +63,43 @@ class FacebookPagePublisherService
         return $response->json();
     }
 
+    public function replyToComment(AiSocialSetting $settings, string $commentId, string $message): array
+    {
+        if (! $settings->hasFacebookCredentials()) {
+            throw new \RuntimeException('Facebook credentials are missing.');
+        }
+
+        $response = Http::asForm()->timeout(30)->post($this->graphUrl($settings, $commentId.'/comments'), [
+            'message' => $message,
+            'access_token' => $this->pageAccessToken($settings),
+        ]);
+
+        if (! $response->successful()) {
+            throw new \RuntimeException($this->friendlyError($response->json('error.message') ?: $response->body()));
+        }
+
+        return $response->json();
+    }
+
+    public function privateReplyToComment(AiSocialSetting $settings, string $commentId, string $message): array
+    {
+        if (! $settings->hasFacebookCredentials()) {
+            throw new \RuntimeException('Facebook credentials are missing.');
+        }
+
+        $response = Http::asForm()->timeout(30)->post($this->graphUrl($settings, $settings->facebook_page_id.'/messages'), [
+            'recipient' => json_encode(['comment_id' => $commentId]),
+            'message' => json_encode(['text' => $message]),
+            'access_token' => $this->pageAccessToken($settings),
+        ]);
+
+        if (! $response->successful()) {
+            throw new \RuntimeException($this->friendlyError($response->json('error.message') ?: $response->body()));
+        }
+
+        return $response->json();
+    }
+
     private function friendlyError(string $message): string
     {
         if (str_contains($message, 'publish_actions')) {

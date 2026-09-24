@@ -12,6 +12,11 @@ class AiSocialSetting extends Model
     protected $casts = [
         'is_enabled' => 'boolean',
         'approval_required' => 'boolean',
+        'comment_automation_enabled' => 'boolean',
+        'comment_require_review' => 'boolean',
+        'auto_public_reply_enabled' => 'boolean',
+        'auto_private_reply_enabled' => 'boolean',
+        'ai_comment_reply_enabled' => 'boolean',
         'daily_post_limit' => 'integer',
         'last_openai_checked_at' => 'datetime',
         'last_facebook_checked_at' => 'datetime',

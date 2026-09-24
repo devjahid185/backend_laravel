@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AiSocialCommentRule;
+use App\Models\AiSocialFacebookComment;
 use App\Models\AiSocialPost;
 use App\Models\AiSocialSetting;
 use App\Services\AiSocialContentService;
+use App\Services\FacebookCommentAutomationService;
 use App\Services\FacebookPagePublisherService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,6 +22,15 @@ class AdminAiSocialController extends Controller
         return response()->json([
             'settings' => $this->serializeSettings(AiSocialSetting::current()),
             'posts' => AiSocialPost::query()
+                ->latest('id')
+                ->limit(50)
+                ->get(),
+            'comment_rules' => AiSocialCommentRule::query()
+                ->orderBy('sort_order')
+                ->orderByDesc('id')
+                ->limit(50)
+                ->get(),
+            'facebook_comments' => AiSocialFacebookComment::query()
                 ->latest('id')
                 ->limit(50)
                 ->get(),
@@ -41,6 +53,12 @@ class AdminAiSocialController extends Controller
             'brand_voice' => ['nullable', 'string', 'max:2000'],
             'schedule_timezone' => ['required', 'string', 'max:64'],
             'daily_post_limit' => ['required', 'integer', 'min:1', 'max:20'],
+            'facebook_webhook_verify_token' => ['nullable', 'string', 'max:120'],
+            'comment_automation_enabled' => ['required', 'boolean'],
+            'comment_require_review' => ['required', 'boolean'],
+            'auto_public_reply_enabled' => ['required', 'boolean'],
+            'auto_private_reply_enabled' => ['required', 'boolean'],
+            'ai_comment_reply_enabled' => ['required', 'boolean'],
         ]);
 
         if (blank($data['openai_api_key'] ?? null)) {
@@ -295,6 +313,68 @@ class AdminAiSocialController extends Controller
         return response()->json(['message' => "Published {$count} due post(s)."]);
     }
 
+    public function storeCommentRule(Request $request): JsonResponse
+    {
+        $rule = AiSocialCommentRule::query()->create($this->commentRuleData($request));
+
+        return response()->json([
+            'message' => 'Comment automation rule saved.',
+            'rule' => $rule,
+            'comment_rules' => $this->commentRules(),
+        ], 201);
+    }
+
+    public function updateCommentRule(Request $request, AiSocialCommentRule $rule): JsonResponse
+    {
+        $rule->update($this->commentRuleData($request));
+
+        return response()->json([
+            'message' => 'Comment automation rule updated.',
+            'rule' => $rule->fresh(),
+            'comment_rules' => $this->commentRules(),
+        ]);
+    }
+
+    public function deleteCommentRule(AiSocialCommentRule $rule): JsonResponse
+    {
+        $rule->delete();
+
+        return response()->json([
+            'message' => 'Comment automation rule deleted.',
+            'comment_rules' => $this->commentRules(),
+        ]);
+    }
+
+    public function sendCommentReplies(Request $request, AiSocialFacebookComment $comment, FacebookCommentAutomationService $automation): JsonResponse
+    {
+        $data = $request->validate([
+            'public_reply_text' => ['nullable', 'string', 'max:2000'],
+            'private_reply_text' => ['nullable', 'string', 'max:2000'],
+            'send_public' => ['boolean'],
+            'send_private' => ['boolean'],
+        ]);
+
+        $comment->fill([
+            'public_reply_text' => $data['public_reply_text'] ?? $comment->public_reply_text,
+            'private_reply_text' => $data['private_reply_text'] ?? $comment->private_reply_text,
+            'reviewed_by' => $request->user()?->id,
+            'reviewed_at' => now(),
+        ])->save();
+
+        $settings = AiSocialSetting::current()->forceFill([
+            'auto_public_reply_enabled' => (bool) ($data['send_public'] ?? false),
+            'auto_private_reply_enabled' => (bool) ($data['send_private'] ?? false),
+        ]);
+
+        $comment = $automation->sendReplies($comment->fresh(), $settings);
+
+        return response()->json([
+            'message' => $comment->status === 'reply_failed' ? 'Reply attempted with errors.' : 'Reply sent.',
+            'comment' => $comment,
+            'facebook_comments' => $this->facebookComments(),
+        ], $comment->status === 'reply_failed' ? 422 : 200);
+    }
+
     private function publishPost(AiSocialPost $post, FacebookPagePublisherService $facebook, bool $now): AiSocialPost
     {
         $post->update(['status' => 'publishing', 'failure_message' => null]);
@@ -328,6 +408,13 @@ class AdminAiSocialController extends Controller
             'has_facebook_page_access_token' => filled($settings->facebook_page_access_token_plain),
             'facebook_page_access_token_masked' => $settings->maskedFacebookToken(),
             'facebook_api_version' => $settings->facebook_api_version,
+            'facebook_webhook_verify_token' => $settings->facebook_webhook_verify_token,
+            'webhook_callback_url' => url('/api/facebook/webhook'),
+            'comment_automation_enabled' => (bool) $settings->comment_automation_enabled,
+            'comment_require_review' => (bool) $settings->comment_require_review,
+            'auto_public_reply_enabled' => (bool) $settings->auto_public_reply_enabled,
+            'auto_private_reply_enabled' => (bool) $settings->auto_private_reply_enabled,
+            'ai_comment_reply_enabled' => (bool) $settings->ai_comment_reply_enabled,
             'default_language' => $settings->default_language,
             'default_tone' => $settings->default_tone,
             'brand_voice' => $settings->brand_voice,
@@ -357,5 +444,36 @@ class AdminAiSocialController extends Controller
         }
 
         return 'text';
+    }
+
+    private function commentRuleData(Request $request): array
+    {
+        return $request->validate([
+            'is_active' => ['required', 'boolean'],
+            'keyword' => ['required', 'string', 'max:120'],
+            'public_reply' => ['nullable', 'string', 'max:2000'],
+            'private_reply' => ['nullable', 'string', 'max:2000'],
+            'ai_enabled' => ['required', 'boolean'],
+            'auto_public_reply' => ['required', 'boolean'],
+            'auto_private_reply' => ['required', 'boolean'],
+            'sort_order' => ['nullable', 'integer', 'min:0', 'max:9999'],
+        ]);
+    }
+
+    private function commentRules()
+    {
+        return AiSocialCommentRule::query()
+            ->orderBy('sort_order')
+            ->orderByDesc('id')
+            ->limit(50)
+            ->get();
+    }
+
+    private function facebookComments()
+    {
+        return AiSocialFacebookComment::query()
+            ->latest('id')
+            ->limit(50)
+            ->get();
     }
 }
