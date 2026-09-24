@@ -136,7 +136,7 @@ class AiSocialContentService
         return [
             'caption' => trim((string) ($decoded['caption'] ?? '')),
             'hashtags' => array_values(array_filter((array) ($decoded['hashtags'] ?? []))),
-            'image_prompt' => trim((string) ($decoded['image_prompt'] ?? '')),
+            'image_prompt' => $this->safeSocialImagePrompt(trim((string) ($decoded['image_prompt'] ?? '')), $source),
             'topic' => trim((string) ($decoded['topic'] ?? ($source['title'] ?? 'Bholavashi'))),
             'raw' => $response->json(),
         ];
@@ -203,10 +203,24 @@ class AiSocialContentService
         return [
             'caption' => $caption."\n\n#ভোলাবাসী #Bhola #LocalService",
             'hashtags' => ['#ভোলাবাসী', '#Bhola', '#LocalService'],
-            'image_prompt' => "Create a clean square social media graphic for Bholavashi about {$title}. Bangladeshi local service app style, warm red and teal accents, no fake logos, no readable tiny text.",
+            'image_prompt' => $this->safeSocialImagePrompt("Create a clean square promotional visual about {$title}. Bangladeshi local service app style, warm red and teal accents, realistic but polished composition.", $source),
             'topic' => $title,
             'raw' => ['fallback' => true, 'note' => $note],
         ];
+    }
+
+    private function safeSocialImagePrompt(string $prompt, array $source): string
+    {
+        $title = $source['title'] ?? $source['name'] ?? 'Bholavashi';
+        $base = filled($prompt)
+            ? $prompt
+            : "Create a clean square promotional visual about {$title}.";
+
+        return trim($base)."\n\n"
+            .'Hard requirements: 1024x1024 square image for a Facebook post. '
+            .'Do not render any written text at all: no letters, no words, no numbers, no Bangla text, no English text, no product name, no labels, no signage, no watermark, no logo, no fake app UI. '
+            .'The visual must be text-free and leave some clean negative space so Bholavashi can add accurate brand text, price, offer and call-to-action later in a separate template. '
+            .'Avoid distorted food, extra hands, fake packaging, unreadable typography, cropped titles, or misspelled words.';
     }
 
     private function foodItemSnapshot(FoodItem $item, ?string $imageUrl = null): array
