@@ -16,6 +16,7 @@ class AdminModuleSeeder extends Seeder
             ['name' => 'Staff Management', 'slug' => 'staff-management', 'group_name' => 'Core', 'route' => '/admin/staff-management'],
             ['name' => 'Home Banners', 'slug' => 'home-banners', 'group_name' => 'Engagement', 'route' => '/admin/home-banners'],
             ['name' => 'Home Services', 'slug' => 'home-service-shortcuts', 'group_name' => 'Engagement', 'route' => '/admin/home-service-shortcuts'],
+            ['name' => 'AI Social Automation', 'slug' => 'ai-social', 'group_name' => 'Engagement', 'route' => '/admin/ai-social'],
             ['name' => 'Workers', 'slug' => 'workers', 'group_name' => 'Services', 'route' => '/admin/workers'],
             ['name' => 'Businesses', 'slug' => 'businesses', 'group_name' => 'Services', 'route' => '/admin/businesses'],
             ['name' => 'Marketplace', 'slug' => 'marketplace', 'group_name' => 'Services', 'route' => '/admin/marketplace'],

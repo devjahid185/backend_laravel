@@ -16,4 +16,9 @@ class FoodCoupon extends Model
         'max_discount' => 'decimal:2',
         'minimum_order' => 'decimal:2',
     ];
+
+    public function restaurant()
+    {
+        return $this->belongsTo(Restaurant::class);
+    }
 }

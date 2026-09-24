@@ -5,10 +5,18 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use App\Http\Controllers\Api\AdminAiSocialController;
+use App\Services\FacebookPagePublisherService;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
+
+Artisan::command('ai-social:publish-due', function (): int {
+    app(AdminAiSocialController::class)->publishDue(app(FacebookPagePublisherService::class));
+    $this->info('AI social due publish check completed.');
+    return 0;
+})->purpose('Publish approved AI social posts that are due');
 
 Artisan::command('medicine:import-medex {path : Path to medex.db SQLite/CSV file}', function (string $path): int {
     if (! is_file($path)) {
