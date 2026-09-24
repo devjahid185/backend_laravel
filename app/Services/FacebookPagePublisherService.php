@@ -14,9 +14,10 @@ class FacebookPagePublisherService
             throw new \RuntimeException('Facebook Page ID or Page Access Token is missing.');
         }
 
+        $accessToken = $this->pageAccessToken($settings);
         $response = Http::timeout(30)->get($this->graphUrl($settings, $settings->facebook_page_id), [
             'fields' => 'id,name,fan_count',
-            'access_token' => $settings->facebook_page_access_token_plain,
+            'access_token' => $accessToken,
         ]);
 
         if (! $response->successful()) {
@@ -34,7 +35,7 @@ class FacebookPagePublisherService
 
         $payload = [
             'message' => trim($post->caption."\n\n".implode(' ', $post->hashtags ?: [])),
-            'access_token' => $settings->facebook_page_access_token_plain,
+            'access_token' => $this->pageAccessToken($settings),
         ];
 
         if (! $now && $post->scheduled_at && $post->scheduled_at->isFuture()) {
@@ -69,6 +70,36 @@ class FacebookPagePublisherService
         }
 
         return $message;
+    }
+
+    private function pageAccessToken(AiSocialSetting $settings): string
+    {
+        $token = $settings->facebook_page_access_token_plain;
+        $pageId = (string) $settings->facebook_page_id;
+
+        $me = Http::timeout(20)->get($this->graphUrl($settings, 'me'), [
+            'fields' => 'id,name',
+            'access_token' => $token,
+        ]);
+
+        if ($me->successful() && (string) $me->json('id') === $pageId) {
+            return $token;
+        }
+
+        $accounts = Http::timeout(20)->get($this->graphUrl($settings, 'me/accounts'), [
+            'fields' => 'id,name,access_token,tasks',
+            'access_token' => $token,
+        ]);
+
+        if ($accounts->successful()) {
+            foreach (($accounts->json('data') ?? []) as $page) {
+                if ((string) ($page['id'] ?? '') === $pageId && filled($page['access_token'] ?? null)) {
+                    return (string) $page['access_token'];
+                }
+            }
+        }
+
+        return $token;
     }
 
     private function graphUrl(AiSocialSetting $settings, string $path): string
