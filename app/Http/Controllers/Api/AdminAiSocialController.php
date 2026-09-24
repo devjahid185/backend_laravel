@@ -94,6 +94,61 @@ class AdminAiSocialController extends Controller
         }
     }
 
+    public function openAiModels(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'openai_api_key' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $settings = AiSocialSetting::current();
+        $apiKey = filled($data['openai_api_key'] ?? null)
+            ? $data['openai_api_key']
+            : $settings->openai_api_key_plain;
+
+        if (blank($apiKey)) {
+            return response()->json(['message' => 'OpenAI API key is missing.'], 422);
+        }
+
+        try {
+            $response = Http::withToken($apiKey)
+                ->timeout(30)
+                ->get('https://api.openai.com/v1/models');
+
+            if (! $response->successful()) {
+                return response()->json([
+                    'message' => $response->json('error.message') ?: $response->body(),
+                ], 422);
+            }
+
+            $models = collect($response->json('data') ?? [])
+                ->map(function (array $model): array {
+                    $id = (string) ($model['id'] ?? '');
+
+                    return [
+                        'id' => $id,
+                        'owned_by' => $model['owned_by'] ?? null,
+                        'created' => $model['created'] ?? null,
+                        'kind' => $this->openAiModelKind($id),
+                    ];
+                })
+                ->filter(fn (array $model): bool => filled($model['id']))
+                ->sortBy([
+                    fn (array $model): int => $model['kind'] === 'image' ? 1 : 0,
+                    fn (array $model): string => $model['id'],
+                ])
+                ->values()
+                ->all();
+
+            return response()->json([
+                'models' => $models,
+                'settings' => $this->serializeSettings($settings->fresh()),
+                'fetched_at' => now()->toDateTimeString(),
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
     public function testFacebook(FacebookPagePublisherService $facebook): JsonResponse
     {
         $settings = AiSocialSetting::current();
@@ -275,5 +330,24 @@ class AdminAiSocialController extends Controller
             'last_facebook_checked_at' => $settings->last_facebook_checked_at,
             'last_facebook_check_result' => $settings->last_facebook_check_result,
         ];
+    }
+
+    private function openAiModelKind(string $id): string
+    {
+        $lower = strtolower($id);
+
+        if (str_contains($lower, 'image') || str_starts_with($lower, 'dall-e') || str_starts_with($lower, 'gpt-image')) {
+            return 'image';
+        }
+
+        if (str_contains($lower, 'tts') || str_contains($lower, 'transcribe') || str_contains($lower, 'whisper')) {
+            return 'audio';
+        }
+
+        if (str_contains($lower, 'embedding') || str_contains($lower, 'moderation')) {
+            return 'utility';
+        }
+
+        return 'text';
     }
 }

@@ -105,6 +105,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::put('/admin/app-version-settings', [AdminAppVersionSettingController::class, 'update']);
     Route::get('/admin/ai-social', [AdminAiSocialController::class, 'index']);
     Route::put('/admin/ai-social/settings', [AdminAiSocialController::class, 'updateSettings']);
+    Route::post('/admin/ai-social/openai-models', [AdminAiSocialController::class, 'openAiModels']);
     Route::post('/admin/ai-social/test-openai', [AdminAiSocialController::class, 'testOpenAi']);
     Route::post('/admin/ai-social/test-facebook', [AdminAiSocialController::class, 'testFacebook']);
     Route::get('/admin/ai-social/sources', [AdminAiSocialController::class, 'sources']);
