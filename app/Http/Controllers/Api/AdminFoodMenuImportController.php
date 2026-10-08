@@ -92,7 +92,7 @@ class AdminFoodMenuImportController extends Controller
             'status' => 'draft_ready',
             'source_images' => [],
             'extracted_items' => $items,
-            'notes' => trim(($data['title'] ?? 'Chat menu draft')."\n".($data['notes'] ?? '')),
+            'notes' => trim((string) ($data['notes'] ?? '')) ?: null,
             'extracted_at' => now(),
         ]);
 
@@ -298,9 +298,7 @@ class AdminFoodMenuImportController extends Controller
                     $price = (float) collect($sizeOptions)->pluck('price')->filter(fn ($value) => $value !== null && $value > 0)->min();
                 }
                 $categoryName = trim((string) ($raw['category_name'] ?? ''));
-                $matchedCategory = $categoryName === ''
-                    ? null
-                    : FoodCategory::query()->whereRaw('LOWER(name) = ?', [Str::lower($categoryName)])->first();
+                $matchedCategoryId = $categoryName === '' ? null : $this->categoryIdFor($categoryName);
                 $duplicate = $restaurantId
                     ? FoodItem::query()
                         ->where('restaurant_id', $restaurantId)
@@ -312,7 +310,7 @@ class AdminFoodMenuImportController extends Controller
                     'selected' => $price > 0 && ! $duplicate,
                     'name' => $name,
                     'category_name' => $categoryName,
-                    'food_category_id' => $matchedCategory?->id,
+                    'food_category_id' => $matchedCategoryId,
                     'description' => trim((string) ($raw['description'] ?? '')) ?: null,
                     'price' => $price,
                     'discount_price' => filled($raw['discount_price'] ?? null) ? $this->money($raw['discount_price']) : null,
