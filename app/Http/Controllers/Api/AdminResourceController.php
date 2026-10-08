@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\BloodDonor;
 use App\Models\Business;
 use App\Models\BusinessCategory;
+use App\Models\CarCategory;
 use App\Models\CarRental;
 use App\Models\CourierOffice;
 use App\Models\Doctor;
@@ -47,15 +48,18 @@ use App\Models\RestaurantCategory;
 use App\Models\Rider;
 use App\Models\RiderDocument;
 use App\Models\RiderLocation;
+use App\Models\RiderOrderRequest;
 use App\Models\RiderRating;
 use App\Models\RiderSupportTicket;
 use App\Models\RiderWalletEntry;
 use App\Models\UpdatePost;
 use App\Models\Worker;
 use App\Models\WorkerCategory;
+use App\Support\MediaLookup;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class AdminResourceController extends Controller
@@ -103,6 +107,7 @@ class AdminResourceController extends Controller
         'payments' => Payment::class,
         'worker-categories' => WorkerCategory::class,
         'business-categories' => BusinessCategory::class,
+        'car-categories' => CarCategory::class,
         'marketplace-categories' => MarketplaceCategory::class,
         'doctor-categories' => DoctorCategory::class,
         'hospital-categories' => HospitalCategory::class,
@@ -140,6 +145,9 @@ class AdminResourceController extends Controller
             ]);
             $this->applyDeliveryOrderFilters($query, $request, false);
         }
+        if ($resource === 'food-items') {
+            $query->with('restaurant:id,name');
+        }
         $search = trim((string) $request->query('search', ''));
         if ($search !== '') {
             $this->applySearch($query, $model, $search);
@@ -153,6 +161,9 @@ class AdminResourceController extends Controller
         }
         if ($resource === 'medicine-orders') {
             $paginator->setCollection($paginator->getCollection()->map(fn (MedicineOrder $order) => $this->decorateMedicineOrder($order)));
+        }
+        if ($resource === 'food-items') {
+            $paginator->setCollection($this->decorateFoodItems($paginator->getCollection()));
         }
 
         $columns = $this->columnsFor($model);
@@ -204,6 +215,9 @@ class AdminResourceController extends Controller
                 'riderRequests as total_rider_requests_count',
             ]);
         }
+        if ($resource === 'food-items') {
+            $query->with('restaurant:id,name');
+        }
 
         $record = $query->findOrFail($id);
 
@@ -212,6 +226,9 @@ class AdminResourceController extends Controller
         }
         if ($resource === 'medicine-orders') {
             $record = $this->decorateMedicineOrder($record);
+        }
+        if ($resource === 'food-items') {
+            $record = $this->decorateFoodItem($record);
         }
 
         return response()->json($record);
@@ -226,6 +243,9 @@ class AdminResourceController extends Controller
 
         $payload = $this->normalizePayload($resource, $request->except(['id', 'created_at', 'updated_at', 'deleted_at']));
         $record = $model::query()->create($payload);
+        if ($resource === 'food-items') {
+            $record = $this->decorateFoodItem($record);
+        }
 
         return response()->json(['message' => 'Created', 'record' => $record], 201);
     }
@@ -246,8 +266,110 @@ class AdminResourceController extends Controller
             }
         }
         $record->fill($payload)->save();
+        if ($resource === 'food-items') {
+            $record = $this->decorateFoodItem($record->fresh());
+        }
 
         return response()->json(['message' => 'Updated', 'record' => $record]);
+    }
+
+    public function assignRider(Request $request, string $resource, int $id): JsonResponse
+    {
+        abort_unless(in_array($resource, ['food-orders', 'medicine-orders'], true), 422, 'Rider assignment is only available for delivery orders.');
+
+        $data = $request->validate([
+            'rider_id' => ['required', 'integer', 'exists:riders,id'],
+        ]);
+
+        $model = $resource === 'food-orders' ? FoodOrder::class : MedicineOrder::class;
+        $rider = Rider::query()->findOrFail((int) $data['rider_id']);
+
+        $order = DB::transaction(function () use ($id, $model, $rider, $resource) {
+            $order = $model::query()->lockForUpdate()->findOrFail($id);
+            $rider->refresh();
+            abort_if(in_array($order->status, ['delivered', 'cancelled', 'rejected'], true), 422, 'Completed or cancelled orders cannot be reassigned.');
+
+            $earning = $this->estimateRiderEarning($order, FoodDeliverySetting::current());
+            $payload = [
+                'rider_id' => $rider->id,
+                'delivery_person_name' => $rider->name,
+                'delivery_person_phone' => $rider->phone,
+                'rider_assigned_at' => now(),
+                'rider_earning' => $earning,
+                'admin_delivery_income' => round(max(0, (float) ($order->delivery_fee ?? 0) - $earning), 2),
+            ];
+
+            if (in_array($order->status, ['payment_pending', 'pending'], true)) {
+                $payload['status'] = 'accepted';
+                $payload['accepted_at'] = $order->accepted_at ?: now();
+            }
+
+            $order->update($payload);
+
+            $requestKeys = $resource === 'food-orders'
+                ? ['food_order_id' => $order->id, 'medicine_order_id' => null]
+                : ['medicine_order_id' => $order->id, 'food_order_id' => null];
+            RiderOrderRequest::query()->updateOrCreate(
+                [
+                    $resource === 'food-orders' ? 'food_order_id' : 'medicine_order_id' => $order->id,
+                    'rider_id' => $rider->id,
+                ],
+                $requestKeys + [
+                    'status' => 'accepted',
+                    'notified_at' => now(),
+                    'responded_at' => now(),
+                    'expires_at' => null,
+                    'reject_reason' => null,
+                ]
+            );
+            RiderOrderRequest::query()
+                ->where($resource === 'food-orders' ? 'food_order_id' : 'medicine_order_id', $order->id)
+                ->where('rider_id', '!=', $rider->id)
+                ->where('status', 'pending')
+                ->update(['status' => 'expired', 'responded_at' => now()]);
+
+            $rider->update(['availability_status' => 'busy']);
+
+            return $order->fresh();
+        });
+
+        if ($resource === 'food-orders') {
+            $order = FoodOrder::query()
+                ->with([
+                    'items',
+                    'restaurant:id,name,phone,address,lat,lng,commission_enabled,commission_type,commission_rate,commission_fixed_fee,settlement_cycle',
+                    'address',
+                    'rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
+                    'riderRequests.rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
+                ])
+                ->withCount([
+                    'riderRequests as pending_rider_requests_count' => fn ($q) => $q->where('status', 'pending'),
+                    'riderRequests as total_rider_requests_count',
+                ])
+                ->findOrFail($id);
+
+            return response()->json([
+                'message' => 'Rider assigned successfully.',
+                'record' => $this->decorateFoodOrder($order),
+            ]);
+        }
+
+        $order = MedicineOrder::query()
+            ->with([
+                'items',
+                'rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
+                'riderRequests.rider:id,name,phone,availability_status,account_status,last_lat,last_lng,last_location_at',
+            ])
+            ->withCount([
+                'riderRequests as pending_rider_requests_count' => fn ($q) => $q->where('status', 'pending'),
+                'riderRequests as total_rider_requests_count',
+            ])
+            ->findOrFail($id);
+
+        return response()->json([
+            'message' => 'Rider assigned successfully.',
+            'record' => $this->decorateMedicineOrder($order),
+        ]);
     }
 
     public function destroy(string $resource, int $id): JsonResponse
@@ -513,6 +635,22 @@ class AdminResourceController extends Controller
             return [];
         }
         return Schema::getColumnListing($table);
+    }
+
+    private function decorateFoodItems($items)
+    {
+        $imageMap = MediaLookup::primaryUrlMap('food_item', $items->pluck('id')->all());
+
+        return $items->map(function (FoodItem $item) use ($imageMap): FoodItem {
+            $item->image_url = $imageMap[$item->id] ?? ($item->image_url ?? null);
+            return $item;
+        });
+    }
+
+    private function decorateFoodItem(FoodItem $item): FoodItem
+    {
+        $item->image_url = MediaLookup::primaryUrlMap('food_item', [$item->id])[$item->id] ?? ($item->image_url ?? null);
+        return $item;
     }
 
     private function applySearch($query, string $model, string $search): void

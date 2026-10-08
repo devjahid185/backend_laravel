@@ -931,11 +931,16 @@ class FoodDeliveryController extends Controller
         $order->fill($data);
         $this->fillOrderStatusTimestamp($order, $data['status']);
         $order->save();
+        $riderDispatch = null;
         if (in_array($data['status'], ['accepted', 'preparing'], true)) {
-            $this->dispatchOrderToNearbyRiders($order->fresh('restaurant'));
+            $riderDispatch = $this->dispatchOrderToNearbyRiders($order->fresh('restaurant'));
         }
         $this->notifyFoodOrderCustomer($order->fresh('restaurant'));
-        return response()->json(['message' => 'Order updated', 'order' => $this->decorateFoodOrder($order->fresh('restaurant'))]);
+        return response()->json([
+            'message' => 'Order updated',
+            'order' => $this->decorateFoodOrder($order->fresh('restaurant')),
+            'rider_dispatch' => $riderDispatch,
+        ]);
     }
 
     public function favorites(Request $request): JsonResponse
@@ -1915,20 +1920,39 @@ class FoodDeliveryController extends Controller
         ]);
     }
 
-    private function dispatchOrderToNearbyRiders(FoodOrder $order): void
+    private function dispatchOrderToNearbyRiders(FoodOrder $order): array
     {
         if ($order->order_type !== 'delivery' || $order->rider_id) {
-            Log::info('Rider dispatch skipped: order not dispatchable', [
+            $summary = [
                 'order_id' => $order->id,
                 'order_type' => $order->order_type,
                 'rider_id' => $order->rider_id,
-            ]);
-            return;
+                'reason' => 'order_not_dispatchable',
+                'eligible_riders' => 0,
+                'created_or_refreshed' => 0,
+                'notified' => 0,
+            ];
+            Log::info('Rider dispatch skipped: order not dispatchable', $summary);
+            return $summary;
         }
 
         $restaurant = $order->restaurant;
         $originLat = $restaurant?->lat !== null ? (float) $restaurant->lat : null;
         $originLng = $restaurant?->lng !== null ? (float) $restaurant->lng : null;
+        $activeApprovedRiders = Rider::query()
+            ->where('kyc_status', 'approved')
+            ->where('account_status', 'active');
+        $activeApprovedCount = (clone $activeApprovedRiders)->count();
+        $agreementReadyCount = (clone $activeApprovedRiders)->where('agreement_accepted', true)->count();
+        $onlineCount = (clone $activeApprovedRiders)
+            ->where('agreement_accepted', true)
+            ->where('availability_status', 'online')
+            ->count();
+        $withLocationCount = (clone $activeApprovedRiders)
+            ->where('agreement_accepted', true)
+            ->whereNotNull('last_lat')
+            ->whereNotNull('last_lng')
+            ->count();
         $riders = Rider::query()
             ->where('kyc_status', 'approved')
             ->where('account_status', 'active')
@@ -1947,11 +1971,23 @@ class FoodDeliveryController extends Controller
             ->values();
 
         if ($riders->isEmpty()) {
-            Log::info('Rider dispatch skipped: no approved riders', ['order_id' => $order->id]);
-            return;
+            $summary = [
+                'order_id' => $order->id,
+                'reason' => 'no_agreement_ready_riders',
+                'active_approved_riders' => $activeApprovedCount,
+                'agreement_ready_riders' => $agreementReadyCount,
+                'online_riders' => $onlineCount,
+                'with_location_riders' => $withLocationCount,
+                'eligible_riders' => 0,
+                'created_or_refreshed' => 0,
+                'notified' => 0,
+            ];
+            Log::info('Rider dispatch skipped: no eligible riders', $summary);
+            return $summary;
         }
 
         $notifyRiderIds = [];
+        $createdOrRefreshed = 0;
         foreach ($riders as $rider) {
             $existing = RiderOrderRequest::query()
                 ->where('food_order_id', $order->id)
@@ -1972,19 +2008,28 @@ class FoodDeliveryController extends Controller
                     'reject_reason' => null,
                 ]
             );
+            $createdOrRefreshed++;
 
             if (! $existing || $existing->status !== 'pending') {
                 $notifyRiderIds[] = $rider->id;
             }
         }
 
-        Log::info('Rider dispatch requests created', [
+        $summary = [
             'order_id' => $order->id,
-            'rider_count' => $riders->count(),
+            'active_approved_riders' => $activeApprovedCount,
+            'agreement_ready_riders' => $agreementReadyCount,
+            'online_riders' => $onlineCount,
+            'with_location_riders' => $withLocationCount,
+            'eligible_riders' => $riders->count(),
+            'created_or_refreshed' => $createdOrRefreshed,
+            'notified' => count($notifyRiderIds),
             'broadcast' => true,
-        ]);
+        ];
+        Log::info('Rider dispatch requests created', $summary);
 
         $this->notifyRidersForOrder($order, $notifyRiderIds);
+        return $summary;
     }
 
     private function notifyRidersForOrder(FoodOrder $order, array $riderIds): void

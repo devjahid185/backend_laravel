@@ -11,6 +11,7 @@ class AdminModuleSeeder extends Seeder
     {
         $modules = [
             ['name' => 'Dashboard', 'slug' => 'dashboard', 'group_name' => 'Core', 'route' => '/admin'],
+            ['name' => 'Analytics', 'slug' => 'analytics', 'group_name' => 'Core', 'route' => '/admin/analytics'],
             ['name' => 'Profile', 'slug' => 'profile', 'group_name' => 'Core', 'route' => '/admin/profile'],
             ['name' => 'Users', 'slug' => 'users', 'group_name' => 'Core', 'route' => '/admin/users'],
             ['name' => 'Staff Management', 'slug' => 'staff-management', 'group_name' => 'Core', 'route' => '/admin/staff-management'],

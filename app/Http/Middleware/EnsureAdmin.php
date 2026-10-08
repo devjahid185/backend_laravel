@@ -71,6 +71,9 @@ class EnsureAdmin
         if ($path === 'api/admin/stats') {
             return ['dashboard', 'view'];
         }
+        if (str_starts_with($path, 'api/admin/analytics')) {
+            return ['analytics', 'view'];
+        }
         if (str_starts_with($path, 'api/admin/profile')) {
             return ['profile', $method === 'GET' ? 'view' : 'update'];
         }

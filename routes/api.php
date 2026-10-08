@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\AdminRiderSettingController;
 use App\Http\Controllers\Api\AdminSmsSettingController;
 use App\Http\Controllers\Api\AdminSupportSettingController;
 use App\Http\Controllers\Api\AdminUserController;
+use App\Http\Controllers\Api\AnalyticsController;
 use App\Http\Controllers\Api\AppVisitController;
 use App\Http\Controllers\Api\AppVersionController;
 use App\Http\Controllers\Api\AuthController;
@@ -81,6 +82,7 @@ Route::get('/home-service-shortcuts', [HomeServiceShortcutController::class, 'ac
 Route::get('/support-settings', [SupportSettingController::class, 'show']);
 Route::get('/map-settings', [MapSettingController::class, 'show']);
 Route::get('/app-version-check', [AppVersionController::class, 'check']);
+Route::post('/analytics/events', [AnalyticsController::class, 'store']);
 Route::get('/facebook/webhook', [FacebookWebhookController::class, 'verify']);
 Route::post('/facebook/webhook', [FacebookWebhookController::class, 'receive']);
 Route::match(['GET', 'POST'], '/medicine/bkash/callback', [MedicineDeliveryController::class, 'bkashCallback']);
@@ -90,6 +92,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::post('/admin/logout', [AdminAuthController::class, 'logout']);
     Route::get('/admin/modules', [AdminModuleController::class, 'index']);
     Route::get('/admin/stats', [AdminDashboardController::class, 'stats']);
+    Route::get('/admin/analytics/overview', [AnalyticsController::class, 'overview']);
     Route::get('/admin/profile', [AdminProfileController::class, 'show']);
     Route::post('/admin/profile', [AdminProfileController::class, 'update']);
     Route::get('/admin/notifications', [AdminNotificationController::class, 'index']);
@@ -160,6 +163,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::get('/admin/delivery-income-summary', [AdminResourceController::class, 'deliveryIncomeSummary']);
     Route::post('/admin/resources/{resource}', [AdminResourceController::class, 'store']);
     Route::get('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'show'])->whereNumber('id');
+    Route::post('/admin/resources/{resource}/{id}/assign-rider', [AdminResourceController::class, 'assignRider'])->whereNumber('id');
     Route::put('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'update'])->whereNumber('id');
     Route::delete('/admin/resources/{resource}/{id}', [AdminResourceController::class, 'destroy'])->whereNumber('id');
 });

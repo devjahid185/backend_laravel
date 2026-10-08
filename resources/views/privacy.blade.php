@@ -10,7 +10,7 @@
     <div class="max-w-3xl">
       <p class="text-xs text-slate-500">Legal</p>
       <h1 class="font-display text-4xl font-bold mt-2">Privacy Policy</h1>
-      <p class="text-slate-600 mt-3">Effective date: September 24, 2026</p>
+      <p class="text-slate-600 mt-3">Effective date: October 2, 2026</p>
     </div>
   </section>
 
@@ -25,6 +25,11 @@
         This policy is designed to match our Google Play Data safety disclosures. If you do not use a feature,
         data related to that feature may not be collected from you.
       </p>
+
+      <div>
+        <h2 class="font-semibold text-ink">No Government Affiliation</h2>
+        <p class="mt-2">Bholavashi is privately developed and maintained by Sohoj IT. The app does not represent any government entity and is not affiliated with, endorsed by, authorized by or operated by any government organization.</p>
+      </div>
 
       <div>
         <h2 class="font-semibold text-ink">1. Information We Collect</h2>

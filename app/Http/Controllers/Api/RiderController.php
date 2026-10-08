@@ -20,6 +20,8 @@ use App\Services\FcmService;
 use App\Services\SmsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -129,6 +131,10 @@ class RiderController extends Controller
     public function dashboard(Request $request): JsonResponse
     {
         $rider = $this->riderFor($request);
+        if ($rider->availability_status === 'online') {
+            $this->dispatchNearbyPendingOrders($rider);
+            $rider = $rider->fresh();
+        }
         $todayFoodOrders = FoodOrder::query()->where('rider_id', $rider->id)->whereDate('created_at', today());
         $todayMedicineOrders = MedicineOrder::query()->where('rider_id', $rider->id)->whereDate('created_at', today());
         $activeFoodOrders = FoodOrder::query()
@@ -377,9 +383,12 @@ class RiderController extends Controller
     public function wallet(Request $request): JsonResponse
     {
         $rider = $this->riderFor($request);
+        [$startDate, $endDate, $periodLabel] = $this->walletDateRange($request);
         $entries = RiderWalletEntry::query()
             ->with('order:id,order_no,status,grand_total,delivery_fee,rider_earning,admin_delivery_income,cash_collected,delivered_at')
             ->where('rider_id', $rider->id)
+            ->when($startDate, fn ($query) => $query->whereDate('created_at', '>=', $startDate))
+            ->when($endDate, fn ($query) => $query->whereDate('created_at', '<=', $endDate))
             ->latest()
             ->paginate(50);
 
@@ -387,16 +396,20 @@ class RiderController extends Controller
             ->with('restaurant:id,name,phone,address')
             ->where('rider_id', $rider->id)
             ->where('status', 'delivered')
+            ->when($startDate, fn ($query) => $query->whereDate('delivered_at', '>=', $startDate))
+            ->when($endDate, fn ($query) => $query->whereDate('delivered_at', '<=', $endDate))
             ->latest('delivered_at')
             ->latest()
-            ->limit(100)
+            ->limit(200)
             ->get();
         $deliveredMedicineOrders = MedicineOrder::query()
             ->where('rider_id', $rider->id)
             ->where('status', 'delivered')
+            ->when($startDate, fn ($query) => $query->whereDate('delivered_at', '>=', $startDate))
+            ->when($endDate, fn ($query) => $query->whereDate('delivered_at', '<=', $endDate))
             ->latest('delivered_at')
             ->latest()
-            ->limit(100)
+            ->limit(200)
             ->get();
         $earningEntries = RiderWalletEntry::query()
             ->where('rider_id', $rider->id)
@@ -417,10 +430,32 @@ class RiderController extends Controller
         $totalAdminIncome = round((float) $history->sum('admin_delivery_income'), 2);
         $totalDeliveryFee = round((float) $history->sum('delivery_fee'), 2);
         $totalCash = round((float) $history->sum('cash_collected'), 2);
+        $cashNetAfterEarning = round((float) $history
+            ->where('cash_required', true)
+            ->sum(fn (array $row): float => max(0, (float) $row['cash_collected'] - (float) $row['rider_earning'])), 2);
         $paidOut = round((float) $history->where('payout_status', 'paid')->sum('rider_earning'), 2);
         $pending = round((float) $history->where('payout_status', '!=', 'paid')->sum('rider_earning'), 2);
+        $dailyBreakdown = $history
+            ->groupBy(fn (array $row): string => $this->historyDateKey($row['delivered_at'] ?? null))
+            ->map(fn ($rows, string $date): array => [
+                'date' => $date,
+                'orders_count' => $rows->count(),
+                'rider_earning' => round((float) $rows->sum('rider_earning'), 2),
+                'admin_delivery_income' => round((float) $rows->sum('admin_delivery_income'), 2),
+                'delivery_fee' => round((float) $rows->sum('delivery_fee'), 2),
+                'cash_collected' => round((float) $rows->sum('cash_collected'), 2),
+                'cash_deposit_due' => round((float) $rows->sum('cash_collected'), 2),
+                'net_cash_after_rider_earning' => round((float) $rows->where('cash_required', true)->sum(fn (array $row): float => max(0, (float) $row['cash_collected'] - (float) $row['rider_earning'])), 2),
+            ])
+            ->sortByDesc('date')
+            ->values();
 
         return response()->json([
+            'filter' => [
+                'period' => $periodLabel,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+            ],
             'summary' => [
                 'wallet_balance' => (float) $rider->wallet_balance,
                 'pending_payout' => (float) $rider->pending_payout,
@@ -429,13 +464,59 @@ class RiderController extends Controller
                 'rider_earning_total' => $totalEarning,
                 'admin_delivery_income_total' => $totalAdminIncome,
                 'cash_collected_total' => $totalCash,
+                'cash_deposit_due' => $totalCash,
+                'net_cash_after_rider_earning' => $cashNetAfterEarning,
                 'paid_out_total' => $paidOut,
                 'pending_from_history' => $pending,
                 'delivered_orders_count' => $history->count(),
             ],
+            'daily_breakdown' => $dailyBreakdown,
             'delivery_history' => $history,
             'entries' => $entries,
         ]);
+    }
+
+    private function walletDateRange(Request $request): array
+    {
+        $period = (string) $request->query('period', 'today');
+        $today = today();
+
+        return match ($period) {
+            'yesterday' => [
+                $today->copy()->subDay()->toDateString(),
+                $today->copy()->subDay()->toDateString(),
+                'yesterday',
+            ],
+            'week' => [
+                $today->copy()->startOfWeek()->toDateString(),
+                $today->copy()->endOfWeek()->toDateString(),
+                'week',
+            ],
+            'month' => [
+                $today->copy()->startOfMonth()->toDateString(),
+                $today->copy()->endOfMonth()->toDateString(),
+                'month',
+            ],
+            'custom' => [
+                $request->query('start_date') ? Carbon::parse((string) $request->query('start_date'))->toDateString() : null,
+                $request->query('end_date') ? Carbon::parse((string) $request->query('end_date'))->toDateString() : null,
+                'custom',
+            ],
+            'all' => [null, null, 'all'],
+            default => [$today->toDateString(), $today->toDateString(), 'today'],
+        };
+    }
+
+    private function historyDateKey(mixed $value): string
+    {
+        if ($value instanceof CarbonInterface) {
+            return $value->toDateString();
+        }
+        if ($value) {
+            $parsed = Carbon::parse((string) $value);
+            return $parsed->toDateString();
+        }
+        return today()->toDateString();
     }
 
     public function supportTickets(Request $request): JsonResponse
@@ -812,13 +893,10 @@ class RiderController extends Controller
             || $rider->account_status !== 'active'
             || ! $rider->agreement_accepted
             || $rider->availability_status !== 'online'
-            || $rider->last_lat === null
-            || $rider->last_lng === null
         ) {
             return;
         }
 
-        $radiusKm = 20.0;
         $orders = FoodOrder::query()
             ->with('restaurant:id,name,phone,address,lat,lng')
             ->where('order_type', 'delivery')
@@ -827,20 +905,22 @@ class RiderController extends Controller
             ->latest()
             ->limit(50)
             ->get()
-            ->filter(function (FoodOrder $order) use ($rider, $radiusKm): bool {
+            ->filter(function (FoodOrder $order) use ($rider): bool {
                 if ($order->restaurant?->lat === null || $order->restaurant?->lng === null) {
                     return false;
                 }
 
-                $distance = $this->distanceKm(
-                    (float) $order->restaurant->lat,
-                    (float) $order->restaurant->lng,
-                    (float) $rider->last_lat,
-                    (float) $rider->last_lng
-                );
+                $distance = $rider->last_lat === null || $rider->last_lng === null
+                    ? null
+                    : $this->distanceKm(
+                        (float) $order->restaurant->lat,
+                        (float) $order->restaurant->lng,
+                        (float) $rider->last_lat,
+                        (float) $rider->last_lng
+                    );
                 $order->rider_dispatch_distance_km = $distance;
 
-                return $distance <= $radiusKm;
+                return true;
             });
 
         foreach ($orders as $order) {
@@ -855,7 +935,9 @@ class RiderController extends Controller
             RiderOrderRequest::query()->updateOrCreate(
                 ['food_order_id' => $order->id, 'rider_id' => $rider->id],
                 [
-                    'distance_km' => round((float) $order->rider_dispatch_distance_km, 2),
+                    'distance_km' => $order->rider_dispatch_distance_km === null
+                        ? null
+                        : round((float) $order->rider_dispatch_distance_km, 2),
                     'restaurant_lat' => (float) $order->restaurant->lat,
                     'restaurant_lng' => (float) $order->restaurant->lng,
                     'status' => 'pending',

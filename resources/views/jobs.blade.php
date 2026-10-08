@@ -43,7 +43,7 @@
   <section class="py-10">
     <h2 class="font-display text-2xl font-semibold mb-6">জনপ্রিয় ক্যাটাগরি</h2>
     <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      @foreach(['অফিস স্টাফ','সেলস/মার্কেটিং','ডেলিভারি','হাসপাতাল স্টাফ','শিক্ষক','হোটেল/রেস্টুরেন্ট','ড্রাইভার','অন্যান্য'] as $item)
+      @foreach(['অফিস স্টাফ','সেলস/মার্কেটিং','ডেলিভারি','হোটেল/রেস্টুরেন্ট','ড্রাইভার','কাস্টমার সাপোর্ট','ফ্রিল্যান্স','অন্যান্য'] as $item)
         <div class="bg-white border border-line rounded-2xl p-4">
           <p class="font-semibold">{{ $item }}</p>
           <p class="text-sm text-slate-600 mt-2">লোকেশন অনুযায়ী চাকরি দেখুন।</p>

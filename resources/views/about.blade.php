@@ -20,7 +20,7 @@
         <h2 class="font-semibold text-ink">Mission</h2>
         <p class="mt-2">
           Our mission is to make reliable local information and services in Bhola accessible, transparent, and easy to use.
-          We want every resident to find services, jobs, healthcare, education, and community updates in one trusted place.
+          We want every resident to find services, jobs, marketplace listings and community updates in one trusted place.
         </p>
       </div>
 
@@ -32,11 +32,10 @@
       <div>
         <h2 class="font-semibold text-ink">What We Provide</h2>
         <ul class="mt-3 list-disc pl-5 space-y-2">
-          <li>Local services directory (workers, professionals, emergency support).</li>
+          <li>Local services directory for workers, professionals and community support.</li>
           <li>Marketplace for local buying and selling with safety features.</li>
           <li>Jobs and CV system for employers and job seekers.</li>
-          <li>Healthcare: doctors, hospitals, diagnostics, and reviews.</li>
-          <li>Education: schools, colleges, madrasas, coaching, and updates.</li>
+          <li>Local service discovery, marketplace posts, restaurants, hotels and property listings.</li>
           <li>Hotels, restaurants, and property listings.</li>
           <li>Community announcements, verified updates, and reporting.</li>
         </ul>

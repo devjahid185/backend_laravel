@@ -2,7 +2,7 @@
 
 @php
   $title = 'ভোলাবাসী | জেলার সব সেবা এক জায়গায়';
-  $description = 'ভোলাবাসী আপনার জেলার সকল সেবা, ব্যবসা, চাকরি, স্বাস্থ্য, শিক্ষা, বাজার, মার্কেটপ্লেস ও জরুরি তথ্য এক প্ল্যাটফর্মে দেয়।';
+  $description = 'ভোলাবাসী আপনার জেলার স্থানীয় সেবা, ব্যবসা, চাকরি, স্বাস্থ্য, শিক্ষা, বাজার, মার্কেটপ্লেস ও কমিউনিটি তথ্য এক প্ল্যাটফর্মে দেয়।';
   $canonical = url('/');
 @endphp
 
@@ -13,7 +13,7 @@
     "@@type": "WebSite",
     "name": "ভোলাবাসী",
     "url": "{{ url('/') }}",
-    "description": "ভোলাবাসী আপনার জেলার সকল সেবা, ব্যবসা, চাকরি, স্বাস্থ্য, শিক্ষা, বাজার, মার্কেটপ্লেস ও জরুরি তথ্য এক প্ল্যাটফর্মে দেয়।",
+    "description": "ভোলাবাসী আপনার জেলার স্থানীয় সেবা, ব্যবসা, চাকরি, স্বাস্থ্য, শিক্ষা, বাজার, মার্কেটপ্লেস ও কমিউনিটি তথ্য এক প্ল্যাটফর্মে দেয়।",
     "inLanguage": "bn"
   }
   </script>
@@ -33,20 +33,20 @@
 @section('content')
   <section class="pt-12 pb-10 grid gap-8 lg:grid-cols-[1.1fr_0.9fr] items-center">
     <div class="space-y-6">
-      <div class="inline-flex items-center gap-2 rounded-full bg-white px-4 py-1 text-xs text-slate-600 border border-line">
+      <div class="inline-flex items-center gap-2 rounded-full bg-white px-4 py-1 text-xs font-semibold text-slate-600 border border-line">
         <span class="h-2 w-2 rounded-full bg-sun"></span>
         আপনার জেলার দৈনন্দিন সব সেবা
       </div>
       <h1 class="font-display text-4xl md:text-5xl font-bold leading-tight">জেলার সকল প্রয়োজনীয় সেবা এখন এক প্ল্যাটফর্মে</h1>
       <p class="text-base md:text-lg text-slate-600">
-        শ্রমিক খোঁজা, ব্যবসা প্রচার, জরুরি নম্বর, চাকরি, রক্তদাতা, শিক্ষা প্রতিষ্ঠান, হাসপাতাল, হোটেল, রেস্তোরাঁ এবং আরও অনেক কিছু—সবকিছু সহজে খুঁজুন, যুক্ত হোন, সেবা নিন।
+        শ্রমিক খোঁজা, ব্যবসা প্রচার, চাকরি, রক্তদাতা, হোটেল, রেস্তোরাঁ, প্রপার্টি এবং আরও অনেক কিছু—সবকিছু সহজে খুঁজুন, যুক্ত হোন, সেবা নিন।
       </p>
       <div class="flex flex-col sm:flex-row gap-3">
         <div class="flex-1 rounded-2xl bg-white border border-line px-4 py-3 flex items-center gap-3">
           <span class="text-slate-400">🔍</span>
           <input class="w-full text-sm outline-none" placeholder="সেবা, প্রতিষ্ঠান, লোকেশন খুঁজুন" />
         </div>
-        <button class="rounded-2xl bg-ink px-6 py-3 text-white text-sm">সার্চ করুন</button>
+        <button class="rounded-2xl bg-brand px-6 py-3 text-white text-sm shadow-sm hover:bg-red-700">সার্চ করুন</button>
       </div>
       <div class="flex flex-wrap gap-4 text-sm">
         <div class="bg-white border border-line rounded-2xl px-4 py-2">
@@ -64,19 +64,19 @@
       </div>
     </div>
     <div class="space-y-4">
-      <div class="bg-white border border-line rounded-3xl p-6">
-        <p class="text-xs uppercase tracking-wide text-slate-400">লাইভ হাইলাইট</p>
-        <h3 class="font-display text-xl font-semibold mt-2">আজকের জরুরি আপডেট</h3>
+      <div class="bg-white border border-line rounded-3xl p-6 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+        <p class="text-xs font-bold uppercase tracking-wide text-brand">লাইভ হাইলাইট</p>
+        <h3 class="font-display text-xl font-semibold mt-2">আজকের কমিউনিটি আপডেট</h3>
         <ul class="mt-4 space-y-3 text-sm text-slate-600">
           <li class="flex items-center gap-3"><span class="h-2 w-2 rounded-full bg-leaf"></span> রক্তদাতা তালিকা আপডেট হয়েছে</li>
           <li class="flex items-center gap-3"><span class="h-2 w-2 rounded-full bg-sun"></span> নতুন চাকরি পোস্ট: ৩৫টি</li>
-          <li class="flex items-center gap-3"><span class="h-2 w-2 rounded-full bg-ink"></span> হাসপাতাল তথ্য যাচাই সম্পন্ন</li>
+          <li class="flex items-center gap-3"><span class="h-2 w-2 rounded-full bg-brand"></span> নতুন সার্ভিস প্রোফাইল যুক্ত হয়েছে</li>
         </ul>
       </div>
-      <div class="bg-ink rounded-3xl p-6 text-white">
+      <div class="bg-brand rounded-3xl p-6 text-white shadow-[0_16px_36px_rgba(238,0,18,0.22)]">
         <h3 class="font-display text-lg font-semibold">কমিউনিটি আপডেট</h3>
-        <p class="text-sm text-white/80 mt-2">আপনার এলাকার নতুন ঘোষণা, ইভেন্ট, বাজারদর এবং গুরুত্বপূর্ণ নোটিফিকেশন এখানে পাবেন।</p>
-        <button class="mt-4 rounded-full bg-white text-ink px-4 py-2 text-sm">কমিউনিটি দেখুন</button>
+        <p class="text-sm text-white/85 mt-2">আপনার এলাকার নতুন ঘোষণা, ইভেন্ট, বাজারদর এবং গুরুত্বপূর্ণ নোটিফিকেশন এখানে পাবেন।</p>
+        <button class="mt-4 rounded-full bg-white text-brand px-4 py-2 text-sm font-semibold">কমিউনিটি দেখুন</button>
       </div>
     </div>
   </section>
@@ -84,7 +84,7 @@
   <section id="features" class="py-10">
     <div class="flex items-center justify-between mb-6">
       <h2 class="font-display text-2xl font-semibold">মেইন ফিচার</h2>
-      <button class="text-sm text-leaf font-medium">সব দেখুন</button>
+      <button class="text-sm text-brand font-medium">সব দেখুন</button>
     </div>
     <div class="grid gap-4 md:grid-cols-3">
       <div class="bg-white border border-line rounded-2xl p-5">
@@ -140,11 +140,6 @@
         <h3 class="font-semibold mt-2">ডাক্তার তালিকা</h3>
         <p class="text-sm text-slate-600 mt-2">স্পেশালিস্ট, শিডিউল, রিভিউ।</p>
       </a>
-      <a href="/hospitals" class="bg-white border border-line rounded-2xl p-4 hover:border-slate-300">
-        <p class="text-xs text-slate-500">হাসপাতাল</p>
-        <h3 class="font-semibold mt-2">হাসপাতাল ও ক্লিনিক</h3>
-        <p class="text-sm text-slate-600 mt-2">রেটিং, লোকেশন, কল অপশন।</p>
-      </a>
       <a href="/restaurants" class="bg-white border border-line rounded-2xl p-4 hover:border-slate-300">
         <p class="text-xs text-slate-500">খাবার</p>
         <h3 class="font-semibold mt-2">রেস্তোরাঁ</h3>
@@ -159,11 +154,6 @@
         <p class="text-xs text-slate-500">প্রপার্টি</p>
         <h3 class="font-semibold mt-2">ভাড়া/বিক্রি</h3>
         <p class="text-sm text-slate-600 mt-2">বাসা, দোকান, জমি তালিকা।</p>
-      </a>
-      <a href="/education" class="bg-white border border-line rounded-2xl p-4 hover:border-slate-300">
-        <p class="text-xs text-slate-500">শিক্ষা</p>
-        <h3 class="font-semibold mt-2">শিক্ষা প্রতিষ্ঠান</h3>
-        <p class="text-sm text-slate-600 mt-2">স্কুল, কলেজ, মাদ্রাসা, কোচিং।</p>
       </a>
     </div>
   </section>
@@ -199,7 +189,7 @@
   <section id="faq" class="py-10">
     <div class="flex items-center justify-between mb-6">
       <h2 class="font-display text-2xl font-semibold">প্রায়শই জিজ্ঞাসিত প্রশ্ন</h2>
-      <button class="text-sm text-leaf font-medium">সব FAQ দেখুন</button>
+      <button class="text-sm text-brand font-medium">সব FAQ দেখুন</button>
     </div>
     <div class="grid gap-4 md:grid-cols-2">
       <div class="bg-white border border-line rounded-2xl p-5">
@@ -235,11 +225,11 @@
 
   <section class="py-10" id="contact">
     <div class="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-      <div class="bg-ink rounded-3xl p-8 text-white">
+      <div class="bg-brand rounded-3xl p-8 text-white shadow-[0_16px_36px_rgba(238,0,18,0.22)]">
         <h2 class="font-display text-2xl font-semibold">আপনার জেলার জন্য ডিজিটাল সমাধান</h2>
-        <p class="text-white/80 mt-3">প্রশাসন, উদ্যোক্তা, কমিউনিটি লিডার—সবার জন্য একসাথে কাজ করার প্ল্যাটফর্ম।</p>
+        <p class="text-white/85 mt-3">প্রশাসন, উদ্যোক্তা, কমিউনিটি লিডার—সবার জন্য একসাথে কাজ করার প্ল্যাটফর্ম।</p>
         <div class="mt-6 flex flex-wrap gap-3">
-          <button class="rounded-full bg-white text-ink px-5 py-2 text-sm">অ্যাডমিন ডেমো চাই</button>
+          <button class="rounded-full bg-white text-brand px-5 py-2 text-sm font-semibold">অ্যাডমিন ডেমো চাই</button>
           <button class="rounded-full border border-white/40 px-5 py-2 text-sm">যোগাযোগ করুন</button>
         </div>
       </div>
