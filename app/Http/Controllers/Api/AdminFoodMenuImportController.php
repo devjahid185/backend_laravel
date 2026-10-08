@@ -64,6 +64,44 @@ class AdminFoodMenuImportController extends Controller
         ], 201);
     }
 
+    public function storeDraft(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'restaurant_id' => ['nullable', 'integer', 'exists:restaurants,id'],
+            'title' => ['nullable', 'string', 'max:180'],
+            'notes' => ['nullable', 'string', 'max:2000'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.selected' => ['nullable', 'boolean'],
+            'items.*.name' => ['required', 'string', 'max:160'],
+            'items.*.category_name' => ['nullable', 'string', 'max:120'],
+            'items.*.food_category_id' => ['nullable', 'integer', 'exists:food_categories,id'],
+            'items.*.description' => ['nullable', 'string', 'max:2000'],
+            'items.*.price' => ['required', 'numeric', 'min:0', 'max:999999'],
+            'items.*.discount_price' => ['nullable', 'numeric', 'min:0', 'max:999999'],
+            'items.*.size_options' => ['nullable', 'array'],
+            'items.*.size_options.*.name' => ['required_with:items.*.size_options', 'string', 'max:80'],
+            'items.*.size_options.*.price' => ['nullable', 'numeric', 'min:0', 'max:999999'],
+            'items.*.preparation_minutes' => ['nullable', 'integer', 'min:1', 'max:240'],
+        ]);
+
+        $restaurantId = isset($data['restaurant_id']) ? (int) $data['restaurant_id'] : null;
+        $items = $this->normalizeAiItems($data['items'], $restaurantId);
+        $import = FoodMenuImport::query()->create([
+            'restaurant_id' => $restaurantId,
+            'user_id' => $request->user()?->id,
+            'status' => 'draft_ready',
+            'source_images' => [],
+            'extracted_items' => $items,
+            'notes' => trim(($data['title'] ?? 'Chat menu draft')."\n".($data['notes'] ?? '')),
+            'extracted_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Chat draft saved. Select restaurant and approve from admin panel.',
+            'import' => $this->serializeImport($import->fresh('restaurant:id,name,phone')),
+        ], 201);
+    }
+
     public function show(FoodMenuImport $import): JsonResponse
     {
         return response()->json($this->serializeImport($import->load('restaurant:id,name,phone')));
@@ -127,6 +165,7 @@ class AdminFoodMenuImportController extends Controller
     public function createItems(Request $request, FoodMenuImport $import): JsonResponse
     {
         $data = $request->validate([
+            'restaurant_id' => ['nullable', 'integer', 'exists:restaurants,id'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.selected' => ['nullable', 'boolean'],
             'items.*.name' => ['required', 'string', 'max:160'],
@@ -135,10 +174,18 @@ class AdminFoodMenuImportController extends Controller
             'items.*.description' => ['nullable', 'string', 'max:2000'],
             'items.*.price' => ['required', 'numeric', 'min:0', 'max:999999'],
             'items.*.discount_price' => ['nullable', 'numeric', 'min:0', 'max:999999'],
+            'items.*.size_options' => ['nullable', 'array'],
+            'items.*.size_options.*.name' => ['required_with:items.*.size_options', 'string', 'max:80'],
+            'items.*.size_options.*.price' => ['nullable', 'numeric', 'min:0', 'max:999999'],
             'items.*.preparation_minutes' => ['nullable', 'integer', 'min:1', 'max:240'],
         ]);
 
-        $createdIds = DB::transaction(function () use ($data, $import): array {
+        $restaurantId = (int) ($import->restaurant_id ?: ($data['restaurant_id'] ?? 0));
+        if ($restaurantId <= 0) {
+            return response()->json(['message' => 'Please select a restaurant before approving this draft.'], 422);
+        }
+
+        $createdIds = DB::transaction(function () use ($data, $import, $restaurantId): array {
             $ids = [];
             foreach ($data['items'] as $row) {
                 if (array_key_exists('selected', $row) && ! $row['selected']) {
@@ -151,7 +198,7 @@ class AdminFoodMenuImportController extends Controller
                 }
 
                 $exists = FoodItem::query()
-                    ->where('restaurant_id', $import->restaurant_id)
+                    ->where('restaurant_id', $restaurantId)
                     ->whereRaw('LOWER(name) = ?', [Str::lower($name)])
                     ->exists();
                 if ($exists) {
@@ -164,13 +211,14 @@ class AdminFoodMenuImportController extends Controller
                 }
 
                 $item = FoodItem::query()->create([
-                    'restaurant_id' => $import->restaurant_id,
+                    'restaurant_id' => $restaurantId,
                     'food_category_id' => $categoryId,
                     'name' => $name,
-                    'slug' => $this->uniqueFoodItemSlug($import->restaurant_id, $name),
+                    'slug' => $this->uniqueFoodItemSlug($restaurantId, $name),
                     'description' => $row['description'] ?? null,
                     'price' => round((float) $row['price'], 2),
                     'discount_price' => filled($row['discount_price'] ?? null) ? round((float) $row['discount_price'], 2) : null,
+                    'size_options' => $this->normalizeSizeOptions($row['size_options'] ?? []),
                     'preparation_minutes' => (int) ($row['preparation_minutes'] ?? 25),
                     'is_available' => true,
                     'status' => 'active',
@@ -179,6 +227,7 @@ class AdminFoodMenuImportController extends Controller
             }
 
             $import->forceFill([
+                'restaurant_id' => $restaurantId,
                 'status' => 'completed',
                 'extracted_items' => $data['items'],
                 'created_food_item_ids' => $ids,
@@ -204,7 +253,8 @@ class AdminFoodMenuImportController extends Controller
                 'text' => "Extract restaurant menu items from the attached menu card images.\n"
                     ."Restaurant: ".($restaurant?->name ?: 'Unknown')."\n"
                     ."Language may be Bangla, English, or mixed.\n"
-                    ."Return strict JSON only with this shape: {\"items\":[{\"name\":\"\",\"category_name\":\"\",\"description\":\"\",\"price\":0,\"discount_price\":null,\"confidence\":0.0,\"notes\":\"\"}]}.\n"
+                    ."Return strict JSON only with this shape: {\"items\":[{\"name\":\"\",\"category_name\":\"\",\"description\":\"\",\"price\":0,\"discount_price\":null,\"size_options\":[{\"name\":\"1 person\",\"price\":0}],\"confidence\":0.0,\"notes\":\"\"}]}.\n"
+                    ."Important: if a menu row has multiple package/people columns, keep it as one item and put every column price inside size_options. Set price to the lowest/single-person price. Do not collapse package prices into one wrong price.\n"
                     ."Rules: keep item names exactly readable, convert Bangladeshi taka prices to numeric values, ignore phone numbers, addresses, VAT notes, social links, headings without price, package decoration, and non-food text. If price is unclear use 0 and low confidence. Do not invent items.",
             ],
         ];
@@ -231,7 +281,7 @@ class AdminFoodMenuImportController extends Controller
         ];
     }
 
-    private function normalizeAiItems(array $items, int $restaurantId): array
+    private function normalizeAiItems(array $items, ?int $restaurantId): array
     {
         return collect($items)
             ->map(function ($raw) use ($restaurantId): ?array {
@@ -243,14 +293,20 @@ class AdminFoodMenuImportController extends Controller
                     return null;
                 }
                 $price = $this->money($raw['price'] ?? 0);
+                $sizeOptions = $this->normalizeSizeOptions($raw['size_options'] ?? []);
+                if ($price <= 0 && $sizeOptions) {
+                    $price = (float) collect($sizeOptions)->pluck('price')->filter(fn ($value) => $value !== null && $value > 0)->min();
+                }
                 $categoryName = trim((string) ($raw['category_name'] ?? ''));
                 $matchedCategory = $categoryName === ''
                     ? null
                     : FoodCategory::query()->whereRaw('LOWER(name) = ?', [Str::lower($categoryName)])->first();
-                $duplicate = FoodItem::query()
-                    ->where('restaurant_id', $restaurantId)
-                    ->whereRaw('LOWER(name) = ?', [Str::lower($name)])
-                    ->first();
+                $duplicate = $restaurantId
+                    ? FoodItem::query()
+                        ->where('restaurant_id', $restaurantId)
+                        ->whereRaw('LOWER(name) = ?', [Str::lower($name)])
+                        ->first()
+                    : null;
 
                 return [
                     'selected' => $price > 0 && ! $duplicate,
@@ -260,10 +316,44 @@ class AdminFoodMenuImportController extends Controller
                     'description' => trim((string) ($raw['description'] ?? '')) ?: null,
                     'price' => $price,
                     'discount_price' => filled($raw['discount_price'] ?? null) ? $this->money($raw['discount_price']) : null,
+                    'size_options' => $sizeOptions,
                     'preparation_minutes' => 25,
                     'confidence' => max(0, min(1, (float) ($raw['confidence'] ?? 0.7))),
                     'notes' => trim((string) ($raw['notes'] ?? '')) ?: null,
                     'duplicate_food_item_id' => $duplicate?->id,
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    private function normalizeSizeOptions(mixed $value): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+
+        return collect($value)
+            ->map(function ($option): ?array {
+                if (is_string($option)) {
+                    $parts = explode(':', $option, 2);
+                    $name = trim($parts[0] ?? '');
+                    $price = $parts[1] ?? null;
+                } elseif (is_array($option)) {
+                    $name = trim((string) ($option['name'] ?? $option['label'] ?? ''));
+                    $price = $option['price'] ?? null;
+                } else {
+                    return null;
+                }
+
+                if ($name === '') {
+                    return null;
+                }
+
+                return [
+                    'name' => $name,
+                    'price' => $price === null || $price === '' ? null : $this->money($price),
                 ];
             })
             ->filter()

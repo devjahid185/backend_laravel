@@ -128,6 +128,7 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function (): void {
     Route::post('/admin/ai-social/facebook-comments/{comment}/reply', [AdminAiSocialController::class, 'sendCommentReplies'])->whereNumber('comment');
     Route::get('/admin/food-menu-imports', [AdminFoodMenuImportController::class, 'index']);
     Route::post('/admin/food-menu-imports', [AdminFoodMenuImportController::class, 'store']);
+    Route::post('/admin/food-menu-imports/manual-draft', [AdminFoodMenuImportController::class, 'storeDraft']);
     Route::get('/admin/food-menu-imports/{import}', [AdminFoodMenuImportController::class, 'show'])->whereNumber('import');
     Route::post('/admin/food-menu-imports/{import}/extract', [AdminFoodMenuImportController::class, 'extract'])->whereNumber('import');
     Route::post('/admin/food-menu-imports/{import}/create-items', [AdminFoodMenuImportController::class, 'createItems'])->whereNumber('import');
