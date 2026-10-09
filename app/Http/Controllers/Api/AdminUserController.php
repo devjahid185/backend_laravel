@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 class AdminUserController extends Controller
@@ -40,12 +41,13 @@ class AdminUserController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['nullable', 'email', 'max:255', Rule::unique('users', 'email')],
-            'phone' => ['nullable', 'string', 'max:20', Rule::unique('users', 'phone')],
+            'phone' => ['required', 'string', 'max:20', Rule::unique('users', 'phone')],
             'role' => ['required', Rule::in(['user', 'worker', 'admin', 'business'])],
-            'password' => ['required', 'string', 'min:6'],
+            'password' => ['nullable', 'string', 'min:6'],
             'verified' => ['sometimes', 'boolean'],
             'is_blocked' => ['sometimes', 'boolean'],
         ]);
+        $validated['password'] = $validated['password'] ?: Str::random(12);
 
         $user = User::query()->create($validated);
 
