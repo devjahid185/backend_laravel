@@ -7,6 +7,7 @@ use App\Models\AiSocialSetting;
 use App\Models\FoodCategory;
 use App\Models\FoodItem;
 use App\Models\FoodMenuImport;
+use App\Models\MediaAsset;
 use App\Models\Restaurant;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -78,6 +79,8 @@ class AdminFoodMenuImportController extends Controller
             'items.*.description' => ['nullable', 'string', 'max:2000'],
             'items.*.price' => ['required', 'numeric', 'min:0', 'max:999999'],
             'items.*.discount_price' => ['nullable', 'numeric', 'min:0', 'max:999999'],
+            'items.*.image_url' => ['nullable', 'string', 'max:2048'],
+            'items.*.image_path' => ['nullable', 'string', 'max:2048'],
             'items.*.size_options' => ['nullable', 'array'],
             'items.*.size_options.*.name' => ['required_with:items.*.size_options', 'string', 'max:80'],
             'items.*.size_options.*.price' => ['nullable', 'numeric', 'min:0', 'max:999999'],
@@ -105,6 +108,38 @@ class AdminFoodMenuImportController extends Controller
     public function show(FoodMenuImport $import): JsonResponse
     {
         return response()->json($this->serializeImport($import->load('restaurant:id,name,phone')));
+    }
+
+    public function uploadItemImage(Request $request, FoodMenuImport $import): JsonResponse
+    {
+        $data = $request->validate([
+            'index' => ['required', 'integer', 'min:0'],
+            'image' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:8192'],
+        ]);
+
+        $items = $import->extracted_items ?: [];
+        $index = (int) $data['index'];
+        if (! array_key_exists($index, $items)) {
+            return response()->json(['message' => 'Draft item not found for image upload.'], 422);
+        }
+
+        $file = $request->file('image');
+        $path = $file->store('food-menu-import-items/'.date('Y/m'), 'public');
+        $image = [
+            'image_path' => $path,
+            'image_url' => Storage::disk('public')->url($path),
+            'image_name' => $file->getClientOriginalName(),
+            'image_mime' => $file->getMimeType(),
+        ];
+
+        $items[$index] = array_merge((array) $items[$index], $image);
+        $import->forceFill(['extracted_items' => $items])->save();
+
+        return response()->json([
+            'message' => 'Draft item image attached.',
+            'image' => $image,
+            'import' => $this->serializeImport($import->fresh('restaurant:id,name,phone')),
+        ]);
     }
 
     public function extract(FoodMenuImport $import): JsonResponse
@@ -174,6 +209,8 @@ class AdminFoodMenuImportController extends Controller
             'items.*.description' => ['nullable', 'string', 'max:2000'],
             'items.*.price' => ['required', 'numeric', 'min:0', 'max:999999'],
             'items.*.discount_price' => ['nullable', 'numeric', 'min:0', 'max:999999'],
+            'items.*.image_url' => ['nullable', 'string', 'max:2048'],
+            'items.*.image_path' => ['nullable', 'string', 'max:2048'],
             'items.*.size_options' => ['nullable', 'array'],
             'items.*.size_options.*.name' => ['required_with:items.*.size_options', 'string', 'max:80'],
             'items.*.size_options.*.price' => ['nullable', 'numeric', 'min:0', 'max:999999'],
@@ -216,6 +253,7 @@ class AdminFoodMenuImportController extends Controller
                     'name' => $name,
                     'slug' => $this->uniqueFoodItemSlug($restaurantId, $name),
                     'description' => $row['description'] ?? null,
+                    'image_url' => $row['image_url'] ?? null,
                     'price' => round((float) $row['price'], 2),
                     'discount_price' => filled($row['discount_price'] ?? null) ? round((float) $row['discount_price'], 2) : null,
                     'size_options' => $this->normalizeSizeOptions($row['size_options'] ?? []),
@@ -223,6 +261,7 @@ class AdminFoodMenuImportController extends Controller
                     'is_available' => true,
                     'status' => 'active',
                 ]);
+                $this->attachDraftImageToFoodItem($item, $row);
                 $ids[] = $item->id;
             }
 
@@ -314,6 +353,8 @@ class AdminFoodMenuImportController extends Controller
                     'description' => trim((string) ($raw['description'] ?? '')) ?: null,
                     'price' => $price,
                     'discount_price' => filled($raw['discount_price'] ?? null) ? $this->money($raw['discount_price']) : null,
+                    'image_url' => trim((string) ($raw['image_url'] ?? '')) ?: null,
+                    'image_path' => trim((string) ($raw['image_path'] ?? '')) ?: null,
                     'size_options' => $sizeOptions,
                     'preparation_minutes' => 25,
                     'confidence' => max(0, min(1, (float) ($raw['confidence'] ?? 0.7))),
@@ -400,6 +441,30 @@ class AdminFoodMenuImportController extends Controller
         }
         $clean = preg_replace('/[^\d.]/', '', (string) $value);
         return round((float) ($clean ?: 0), 2);
+    }
+
+    private function attachDraftImageToFoodItem(FoodItem $item, array $row): void
+    {
+        $path = trim((string) ($row['image_path'] ?? ''));
+        if ($path === '' || ! Storage::disk('public')->exists($path)) {
+            return;
+        }
+
+        MediaAsset::query()
+            ->where('target_type', 'food_item')
+            ->where('target_id', $item->id)
+            ->update(['is_primary' => false]);
+
+        MediaAsset::query()->create([
+            'user_id' => request()->user()?->id,
+            'section' => 'food_item',
+            'target_type' => 'food_item',
+            'target_id' => $item->id,
+            'file_path' => $path,
+            'is_primary' => true,
+            'sort_order' => 0,
+            'alt_text' => $item->name,
+        ]);
     }
 
     private function extractResponseText(array $payload): ?string
