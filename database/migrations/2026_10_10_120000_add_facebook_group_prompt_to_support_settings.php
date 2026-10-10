@@ -10,13 +10,16 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('support_settings', function (Blueprint $table): void {
-            $table->boolean('facebook_group_prompt_enabled')->default(false)->after('whatsapp');
+            $table->boolean('facebook_group_prompt_enabled')->default(true)->after('whatsapp');
             $table->string('facebook_group_url', 500)->nullable()->after('facebook_group_prompt_enabled');
         });
 
         DB::table('support_settings')
             ->whereNull('facebook_group_url')
             ->update(['facebook_group_url' => 'https://www.facebook.com/share/g/1Eyr3yxGqM/']);
+
+        DB::table('support_settings')
+            ->update(['facebook_group_prompt_enabled' => true]);
     }
 
     public function down(): void

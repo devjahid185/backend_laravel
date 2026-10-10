@@ -27,6 +27,7 @@ class SupportSetting extends Model
             [
                 'email' => 'support@bholavashi.site',
                 'availability' => 'প্রতিদিন সকাল ৯টা থেকে রাত ১০টা',
+                'facebook_group_prompt_enabled' => true,
                 'facebook_group_url' => 'https://www.facebook.com/share/g/1Eyr3yxGqM/',
             ]
         );
