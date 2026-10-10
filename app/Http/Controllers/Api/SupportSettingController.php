@@ -21,6 +21,8 @@ class SupportSettingController extends Controller
             'phone' => $settings->phone,
             'email' => $settings->email,
             'whatsapp' => $settings->whatsapp,
+            'facebook_group_prompt_enabled' => (bool) $settings->facebook_group_prompt_enabled,
+            'facebook_group_url' => $settings->facebook_group_url,
             'availability' => $settings->availability,
             'note' => $settings->note,
         ];
