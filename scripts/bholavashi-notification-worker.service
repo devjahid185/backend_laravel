@@ -1,0 +1,17 @@
+[Unit]
+Description=Bholavashi notification queue worker
+After=network.target
+
+[Service]
+Type=simple
+User=new
+Group=new
+WorkingDirectory=/home/new/web/api.bholavashi.site/public_html/backend_laravel
+ExecStart=/usr/bin/php8.4 -d disable_functions= artisan queue:work database --queue=notifications --sleep=2 --tries=2 --timeout=180 --max-time=3600
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=190
+
+[Install]
+WantedBy=multi-user.target

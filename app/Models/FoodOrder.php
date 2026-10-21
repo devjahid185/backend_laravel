@@ -15,6 +15,7 @@ class FoodOrder extends Model
 
     protected $casts = [
         'estimated_delivery_at' => 'datetime',
+        'owner_alert_seen_at' => 'datetime',
         'accepted_at' => 'datetime',
         'preparing_at' => 'datetime',
         'picked_up_at' => 'datetime',

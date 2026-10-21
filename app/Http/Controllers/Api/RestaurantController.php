@@ -41,7 +41,7 @@ class RestaurantController extends Controller
         $restaurants->setCollection(
             $restaurants->getCollection()->map(function (Restaurant $restaurant) use ($map, $request) {
                 $restaurant->image_url = $map[$restaurant->id] ?? null;
-                $restaurant->is_owner = (int) $restaurant->user_id === (int) $request->user()->id;
+                $restaurant->is_owner = $restaurant->isAccessibleBy((int) $request->user()->id);
                 $restaurant->category_name = $restaurant->category_id
                     ? RestaurantCategory::query()->find($restaurant->category_id)?->name
                     : null;
@@ -58,7 +58,7 @@ class RestaurantController extends Controller
         $restaurant = Restaurant::query()->findOrFail($id);
         $restaurant->increment('views');
         $restaurant->image_url = MediaLookup::primaryUrlMap('restaurant', [$restaurant->id])[$restaurant->id] ?? null;
-        $restaurant->is_owner = (int) $restaurant->user_id === (int) $request->user()->id;
+        $restaurant->is_owner = $restaurant->isAccessibleBy((int) $request->user()->id);
         $restaurant->category_name = $restaurant->category_id
             ? RestaurantCategory::query()->find($restaurant->category_id)?->name
             : null;
@@ -80,6 +80,8 @@ class RestaurantController extends Controller
             'upazila' => ['nullable', 'string', 'max:80'],
             'address' => ['nullable', 'string', 'max:255'],
             'opening_hours' => ['nullable', 'string', 'max:120'],
+            'open_time' => ['nullable', 'date_format:H:i', 'required_with:close_time'],
+            'close_time' => ['nullable', 'date_format:H:i', 'required_with:open_time'],
             'min_price' => ['nullable', 'integer', 'min:0'],
             'max_price' => ['nullable', 'integer', 'min:0'],
             'cuisines' => ['nullable', 'array'],
@@ -94,10 +96,18 @@ class RestaurantController extends Controller
             'lng' => ['nullable', 'numeric', 'between:-180,180'],
         ]);
 
+        if (! empty($validated['open_time']) && ! empty($validated['close_time'])) {
+            $validated['opening_hours'] = date('g:i A', strtotime($validated['open_time']))
+                .' - '.date('g:i A', strtotime($validated['close_time']));
+        }
+
         $restaurant = Restaurant::query()->updateOrCreate(
             ['user_id' => $request->user()->id],
             $validated + ['user_id' => $request->user()->id]
         );
+        $restaurant->assignedUsers()->syncWithoutDetaching([
+            (int) $request->user()->id => ['access_role' => 'owner'],
+        ]);
 
         return response()->json([
             'message' => 'Restaurant saved',
@@ -108,7 +118,7 @@ class RestaurantController extends Controller
     public function myRestaurants(Request $request): JsonResponse
     {
         $restaurants = Restaurant::query()
-            ->where('user_id', $request->user()->id)
+            ->accessibleByUser((int) $request->user()->id)
             ->orderByDesc('id')
             ->get();
 

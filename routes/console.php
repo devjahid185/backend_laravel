@@ -4,9 +4,15 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Str;
 use App\Http\Controllers\Api\AdminAiSocialController;
 use App\Services\FacebookPagePublisherService;
+
+Schedule::command('ai-notifications:run')
+    ->everyTenMinutes()
+    ->withoutOverlapping(9)
+    ->onOneServer();
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());

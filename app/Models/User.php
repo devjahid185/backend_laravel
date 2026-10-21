@@ -69,4 +69,16 @@ class User extends Authenticatable
     {
         return $this->hasOne(NotificationPreference::class);
     }
+
+    public function aiNotificationDecisions()
+    {
+        return $this->hasMany(AiNotificationDecision::class);
+    }
+
+    public function assignedRestaurants()
+    {
+        return $this->belongsToMany(Restaurant::class, 'restaurant_user')
+            ->withPivot('access_role')
+            ->withTimestamps();
+    }
 }

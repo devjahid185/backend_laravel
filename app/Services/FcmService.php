@@ -64,13 +64,23 @@ class FcmService
                 'payload' => [
                     'aps' => [
                         'sound' => 'default',
+                        'mutable-content' => 1,
                     ],
                 ],
             ],
         ];
 
+        if (($data['role'] ?? null) === 'restaurant_owner' && ($data['event'] ?? null) === 'new_order') {
+            $message['android']['notification'] = [
+                'channel_id' => 'bholavashi_owner_orders',
+                'sound' => 'default',
+                'notification_priority' => 'PRIORITY_MAX',
+                'visibility' => 'PUBLIC',
+            ];
+        }
+
         if ($image) {
-            $message['android']['notification'] = ['image' => $image];
+            $message['android']['notification']['image'] = $image;
             $message['apns']['fcm_options'] = ['image' => $image];
         }
 

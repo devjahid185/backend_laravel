@@ -10,6 +10,7 @@ class FoodCoupon extends Model
 
     protected $casts = [
         'is_active' => 'boolean',
+        'auto_apply' => 'boolean',
         'starts_at' => 'datetime',
         'ends_at' => 'datetime',
         'discount_value' => 'decimal:2',

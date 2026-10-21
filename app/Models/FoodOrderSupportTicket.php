@@ -10,6 +10,7 @@ class FoodOrderSupportTicket extends Model
 
     protected $casts = [
         'resolved_at' => 'datetime',
+        'admin_replied_at' => 'datetime',
     ];
 
     public function order()
@@ -20,5 +21,10 @@ class FoodOrderSupportTicket extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function repliedBy()
+    {
+        return $this->belongsTo(Admin::class, 'admin_replied_by_id');
     }
 }

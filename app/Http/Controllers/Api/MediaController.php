@@ -232,8 +232,9 @@ class MediaController extends Controller
 
         return match ($targetType) {
             'user' => $target->id === $user->id ? $target : null,
-            'worker', 'business', 'blood_donor', 'doctor', 'hospital', 'hotel', 'restaurant', 'education', 'teacher', 'marketplace_item', 'property' => (int) $target->user_id === (int) $user->id ? $target : null,
-            'food_item' => (int) $target->restaurant?->user_id === (int) $user->id ? $target : null,
+            'restaurant' => $target->isAccessibleBy((int) $user->id) ? $target : null,
+            'worker', 'business', 'blood_donor', 'doctor', 'hospital', 'hotel', 'education', 'teacher', 'marketplace_item', 'property' => (int) $target->user_id === (int) $user->id ? $target : null,
+            'food_item' => $target->restaurant?->isAccessibleBy((int) $user->id) ? $target : null,
             'job_post' => (int) $target->posted_by === (int) $user->id ? $target : null,
             default => null,
         };

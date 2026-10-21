@@ -570,6 +570,20 @@ class MedicineDeliveryController extends Controller
         }
 
         $outsideKm = $this->municipalityOutsideDistanceKm($settings, $lat, $lng, $distanceKm);
+        $longDistanceEnabled = (bool) ($settings->municipality_long_distance_enabled ?? false);
+        $longDistanceThresholdKm = (float) ($settings->municipality_long_distance_threshold_km ?? 8);
+        $longDistanceRate = (float) ($settings->municipality_long_distance_per_km_charge ?? 15);
+        $chargeableKm = max(0, (float) ($distanceKm ?? $outsideKm));
+
+        if ($longDistanceEnabled && $chargeableKm > $longDistanceThresholdKm) {
+            return [
+                'fee' => round($chargeableKm * $longDistanceRate, 2),
+                'distance_km' => $distanceKm === null ? null : round($distanceKm, 2),
+                'mode' => 'municipality_outside_long_distance',
+                'label' => 'Outside pourashava long distance per KM',
+            ];
+        }
+
         return [
             'fee' => round($fixed + ($outsideKm * $extraRate), 2),
             'distance_km' => $distanceKm === null ? null : round($distanceKm, 2),

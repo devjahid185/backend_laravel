@@ -49,11 +49,68 @@ use App\Models\SmsLog;
 use App\Models\UpdatePost;
 use App\Models\User;
 use App\Models\Worker;
+use App\Services\AdminLiveUpdateService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Database\Eloquent\Builder;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AdminDashboardController extends Controller
 {
+    public function liveEvents(AdminLiveUpdateService $liveUpdates): StreamedResponse
+    {
+        return response()->stream(function () use ($liveUpdates): void {
+            @set_time_limit(0);
+            @ini_set('output_buffering', '0');
+            @ini_set('zlib.output_compression', '0');
+            if (function_exists('apache_setenv')) {
+                @apache_setenv('no-gzip', '1');
+            }
+            while (ob_get_level() > 0) {
+                @ob_end_flush();
+            }
+
+            echo "retry: 2500\n";
+            echo ': '.str_repeat(' ', 4096)."\n\n";
+            @flush();
+
+            $lastSignature = null;
+            $startedAt = time();
+            $lastHeartbeatAt = 0;
+
+            while (! connection_aborted() && time() - $startedAt < 1800) {
+                $payload = $liveUpdates->current();
+                $signature = $payload['version'];
+
+                if ($signature !== $lastSignature) {
+                    echo 'id: '.$signature."\n";
+                    echo "event: admin-update\n";
+                    echo 'data: '.json_encode($payload, JSON_UNESCAPED_UNICODE)."\n\n";
+                    $lastSignature = $signature;
+                    $lastHeartbeatAt = time();
+                } elseif (time() - $lastHeartbeatAt >= 15) {
+                    echo "event: heartbeat\n";
+                    echo 'data: '.json_encode(['time' => now()->toIso8601String()])."\n\n";
+                    $lastHeartbeatAt = time();
+                }
+
+                @ob_flush();
+                @flush();
+                sleep(2);
+            }
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache, no-transform',
+            'Connection' => 'keep-alive',
+            'Content-Encoding' => 'none',
+            'X-Accel-Buffering' => 'no',
+        ]);
+    }
+
+    public function liveState(AdminLiveUpdateService $liveUpdates): JsonResponse
+    {
+        return response()->json($liveUpdates->current());
+    }
+
     public function stats(): JsonResponse
     {
         $now = now();

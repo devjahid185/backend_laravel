@@ -25,6 +25,8 @@ use App\Models\Rider;
 use App\Models\RiderOrderRequest;
 use App\Services\FcmService;
 use App\Support\MediaLookup;
+use App\Services\FoodDeliveryChargeCalculator;
+use App\Support\MediaUrl;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -36,6 +38,7 @@ class FoodDeliveryController extends Controller
 {
     public function home(Request $request): JsonResponse
     {
+        $deliverySettings = FoodDeliverySetting::current();
         $promotedItems = FoodItem::query()
             ->with('restaurant:id,name,address,phone')
             ->where('status', 'active')
@@ -61,7 +64,13 @@ class FoodDeliveryController extends Controller
 
         $featuredRestaurants = $this->restaurantQuery($request)
             ->where($this->activePromotionFilter())
-            ->limit(10)
+            ->limit(12)
+            ->get()
+            ->map(fn ($r) => $this->decorateRestaurant($r, $request));
+
+        $normalRestaurants = $this->restaurantQuery($request)
+            ->whereRaw($this->promotionOrderSql().' = 0')
+            ->limit(12)
             ->get()
             ->map(fn ($r) => $this->decorateRestaurant($r, $request));
 
@@ -82,10 +91,16 @@ class FoodDeliveryController extends Controller
             'categories' => FoodCategory::query()->where('is_active', true)->orderBy('sort_order')->orderBy('name')->get(),
             'banners' => $this->decorateFoodBanners($banners, $request),
             'featured_restaurants' => $featuredRestaurants,
-            'restaurants' => $this->restaurantQuery($request)->limit(12)->get()->map(fn ($r) => $this->decorateRestaurant($r, $request)),
+            'restaurants' => $normalRestaurants,
             'promoted_items' => $this->decorateFoodItems($promotedItems),
             'popular_items' => $this->decorateFoodItems($popularItems),
             'offers' => FoodCoupon::query()->where('is_active', true)->latest()->limit(10)->get(),
+            'messenger_enabled' => (bool) ($deliverySettings->messenger_enabled ?? false),
+            'messenger_url' => $deliverySettings->messenger_url,
+            'user_manual_video_enabled' => (bool) ($deliverySettings->user_manual_video_enabled ?? false),
+            'user_manual_video_url' => MediaUrl::toUrl($deliverySettings->user_manual_video_path),
+            'user_manual_video_title' => $deliverySettings->user_manual_video_title ?: 'কীভাবে খাবার অর্ডার করবেন',
+            'user_manual_video_description' => $deliverySettings->user_manual_video_description ?: 'ভোলাবাসী অ্যাপে খুব সহজে খাবার অর্ডার করার পুরো নিয়ম এই ভিডিওতে দেখুন।',
             'areas' => ['Bhola Sadar', 'Borhanuddin', 'Daulatkhan', 'Lalmohan', 'Char Fasson', 'Tazumuddin', 'Manpura', 'Ilisha', 'Bangla Bazar', 'Ukil Para', 'Sadar Road', 'Notun Bazar', 'Launch Ghat'],
             'order_statuses' => $this->statusLabels(),
         ]);
@@ -157,6 +172,7 @@ class FoodDeliveryController extends Controller
             ->orderByRaw($this->promotionOrderSql().' desc')
             ->orderByDesc('promotion_priority')
             ->orderByDesc('is_popular')
+            ->orderByRaw($this->normalItemRandomOrderSql())
             ->orderByDesc('id')
             ->paginate((int) min(max((int) $request->query('per_page', 30), 1), 100));
 
@@ -177,7 +193,7 @@ class FoodDeliveryController extends Controller
 
     public function ownerDashboard(Request $request): JsonResponse
     {
-        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+        $restaurantIds = $this->ownedRestaurantIds($request);
         $orders = FoodOrder::query()->whereIn('restaurant_id', $restaurantIds);
 
         return response()->json([
@@ -202,7 +218,7 @@ class FoodDeliveryController extends Controller
     public function ownerRestaurants(Request $request): JsonResponse
     {
         $restaurants = Restaurant::query()
-            ->where('user_id', $request->user()->id)
+            ->accessibleByUser((int) $request->user()->id)
             ->latest()
             ->get()
             ->map(fn ($r) => $this->decorateRestaurantForOwner($r));
@@ -224,6 +240,8 @@ class FoodDeliveryController extends Controller
             'upazila' => ['nullable', 'string', 'max:80'],
             'address' => ['nullable', 'string', 'max:255'],
             'opening_hours' => ['nullable', 'string', 'max:120'],
+            'open_time' => ['nullable', 'date_format:H:i', 'required_with:close_time'],
+            'close_time' => ['nullable', 'date_format:H:i', 'required_with:open_time'],
             'average_prep_minutes' => ['nullable', 'integer', 'min:5', 'max:240'],
             'min_price' => ['nullable', 'integer', 'min:0'],
             'max_price' => ['nullable', 'integer', 'min:0'],
@@ -243,8 +261,13 @@ class FoodDeliveryController extends Controller
             'lng' => ['required', 'numeric', 'between:-180,180'],
         ]);
 
+        if (! empty($data['open_time']) && ! empty($data['close_time'])) {
+            $data['opening_hours'] = date('g:i A', strtotime($data['open_time']))
+                .' - '.date('g:i A', strtotime($data['close_time']));
+        }
+
         if (! empty($data['id'])) {
-            $restaurant = Restaurant::query()->where('user_id', $request->user()->id)->findOrFail($data['id']);
+            $restaurant = $this->ownedRestaurant($request, (int) $data['id']);
             unset($data['id']);
             $restaurant->fill($data)->save();
         } else {
@@ -258,6 +281,9 @@ class FoodDeliveryController extends Controller
                 'takeaway_available' => $data['takeaway_available'] ?? true,
                 'dine_in_available' => $data['dine_in_available'] ?? true,
                 'status' => 'pending',
+            ]);
+            $restaurant->assignedUsers()->sync([
+                (int) $request->user()->id => ['access_role' => 'owner'],
             ]);
         }
 
@@ -281,7 +307,7 @@ class FoodDeliveryController extends Controller
 
     public function ownerItems(Request $request): JsonResponse
     {
-        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+        $restaurantIds = $this->ownedRestaurantIds($request);
         $items = FoodItem::query()
             ->with('category:id,name', 'restaurant:id,name')
             ->whereIn('restaurant_id', $restaurantIds)
@@ -342,14 +368,14 @@ class FoodDeliveryController extends Controller
 
     public function deleteOwnerItem(Request $request, int $id): JsonResponse
     {
-        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+        $restaurantIds = $this->ownedRestaurantIds($request);
         FoodItem::query()->whereIn('restaurant_id', $restaurantIds)->findOrFail($id)->delete();
         return response()->json(['message' => 'Menu item deleted.']);
     }
 
     public function ownerOrders(Request $request): JsonResponse
     {
-        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+        $restaurantIds = $this->ownedRestaurantIds($request);
         $orders = FoodOrder::query()
             ->with('items', 'restaurant:id,name,phone,address,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
             ->whereIn('restaurant_id', $restaurantIds)
@@ -361,9 +387,98 @@ class FoodDeliveryController extends Controller
         return response()->json($orders);
     }
 
+    public function ownerOrderAlerts(Request $request): JsonResponse
+    {
+        $restaurantIds = $this->ownedRestaurantIds($request);
+
+        if ($restaurantIds->isEmpty()) {
+            return response()->json(['data' => [], 'count' => 0, 'is_owner' => false]);
+        }
+
+        $orders = FoodOrder::query()
+            ->with('items', 'restaurant:id,name,phone,address,lat,lng')
+            ->whereIn('restaurant_id', $restaurantIds)
+            ->where('status', 'pending')
+            ->whereNotExists(function ($query) use ($request): void {
+                $query->selectRaw('1')
+                    ->from('food_order_owner_alert_reads')
+                    ->whereColumn('food_order_owner_alert_reads.food_order_id', 'food_orders.id')
+                    ->where('food_order_owner_alert_reads.user_id', $request->user()->id);
+            })
+            ->oldest()
+            ->limit(10)
+            ->get()
+            ->map(fn (FoodOrder $order) => $this->decorateFoodOrder($order))
+            ->values();
+
+        return response()->json([
+            'data' => $orders,
+            'count' => $orders->count(),
+            'is_owner' => true,
+        ]);
+    }
+
+    public function markOwnerOrderAlertsSeen(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'order_ids' => ['required', 'array', 'min:1', 'max:50'],
+            'order_ids.*' => ['required', 'integer'],
+        ]);
+        $restaurantIds = $this->ownedRestaurantIds($request);
+
+        $orderIds = FoodOrder::query()
+            ->whereIn('restaurant_id', $restaurantIds)
+            ->whereIn('id', array_values(array_unique($data['order_ids'])))
+            ->pluck('id');
+        $now = now();
+        $rows = $orderIds->map(fn ($orderId) => [
+            'food_order_id' => $orderId,
+            'user_id' => $request->user()->id,
+            'seen_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ])->all();
+        if ($rows) {
+            DB::table('food_order_owner_alert_reads')->upsert(
+                $rows,
+                ['food_order_id', 'user_id'],
+                ['seen_at', 'updated_at']
+            );
+        }
+
+        return response()->json([
+            'message' => 'Order alerts marked as seen.',
+            'updated' => count($rows),
+        ]);
+    }
+
+    public function ownerOrder(Request $request, int $id): JsonResponse
+    {
+        $restaurantIds = $this->ownedRestaurantIds($request);
+        $order = FoodOrder::query()
+            ->with('items', 'restaurant:id,name,phone,address,lat,lng', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
+            ->whereIn('restaurant_id', $restaurantIds)
+            ->findOrFail($id);
+
+        $now = now();
+        DB::table('food_order_owner_alert_reads')->upsert([[
+            'food_order_id' => $order->id,
+            'user_id' => $request->user()->id,
+            'seen_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]], ['food_order_id', 'user_id'], ['seen_at', 'updated_at']);
+
+        return response()->json($this->decorateFoodOrder($order->fresh([
+            'items',
+            'restaurant:id,name,phone,address,lat,lng',
+            'rider:id,name,phone,last_lat,last_lng,last_location_at',
+        ])));
+    }
+
     public function ownerSettlement(Request $request): JsonResponse
     {
-        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+        $restaurantIds = $this->ownedRestaurantIds($request);
         $orders = FoodOrder::query()
             ->with('restaurant:id,name,settlement_cycle')
             ->whereIn('restaurant_id', $restaurantIds)
@@ -497,6 +612,8 @@ class FoodDeliveryController extends Controller
         ]);
         $item = FoodItem::query()->findOrFail($data['food_item_id']);
         abort_unless($item->is_available && $item->status === 'active', 422, 'Item is not available.');
+        $restaurant = Restaurant::query()->findOrFail($item->restaurant_id);
+        abort_unless($restaurant->isOpenNow(), 422, $this->restaurantClosedMessage($restaurant));
         $cart = FoodCart::query()->firstOrCreate(['user_id' => $request->user()->id]);
         if ($cart->restaurant_id && (int) $cart->restaurant_id !== (int) $item->restaurant_id) {
             $cart->items()->delete();
@@ -584,6 +701,7 @@ class FoodDeliveryController extends Controller
         ]);
         $cart = FoodCart::query()->with(['items.foodItem', 'restaurant'])->where('user_id', $request->user()->id)->firstOrFail();
         abort_if($cart->items->isEmpty(), 422, 'Cart is empty.');
+        abort_unless($cart->restaurant?->isOpenNow(), 422, $this->restaurantClosedMessage($cart->restaurant));
         $paymentMethod = $data['payment_method'] ?? $this->defaultPaymentMethod($cart->restaurant);
         abort_unless($this->restaurantSupportsPayment($cart->restaurant, $paymentMethod), 422, 'Selected payment method is not available for this restaurant.');
         $address = null;
@@ -607,15 +725,24 @@ class FoodDeliveryController extends Controller
             $charge['distance_km'] = $this->orderRouteDistance($cart->restaurant, (float) $deliveryLat, (float) $deliveryLng);
         }
         $deliveryFee = $charge['fee'];
-        $couponResult = $this->couponDiscount(
-            $data['coupon_code'] ?? null,
-            $itemsTotal,
-            $deliveryFee,
-            $cart->restaurant_id,
-            $request->user()->id,
-            true,
-        );
-        if (! empty($data['coupon_code']) && ! $couponResult['valid']) {
+        $couponCode = $data['coupon_code'] ?? null;
+        $couponResult = $couponCode
+            ? $this->couponDiscount(
+                $couponCode,
+                $itemsTotal,
+                $deliveryFee,
+                $cart->restaurant_id,
+                $request->user()->id,
+                true,
+            )
+            : ($this->autoCouponDiscount(
+                $itemsTotal,
+                $deliveryFee,
+                $cart->restaurant_id,
+                $request->user()->id,
+                true,
+            ) ?? $this->couponDiscount(null, $itemsTotal, $deliveryFee, $cart->restaurant_id, $request->user()->id, true));
+        if (! empty($couponCode) && ! $couponResult['valid']) {
             abort(422, $couponResult['message']);
         }
         $discount = $couponResult['discount_amount'];
@@ -742,13 +869,30 @@ class FoodDeliveryController extends Controller
             $charge['distance_km'] = $this->orderRouteDistance($cart->restaurant, (float) $data['delivery_lat'], (float) $data['delivery_lng']);
         }
 
+        $autoCouponResult = $this->autoCouponDiscount(
+            $itemsTotal,
+            (float) $charge['fee'],
+            $cart->restaurant_id,
+            $request->user()->id,
+            false,
+        );
+        $discount = (float) ($autoCouponResult['discount_amount'] ?? 0);
+
         return response()->json([
             'items_total' => round($itemsTotal, 2),
             'delivery_fee' => $charge['fee'],
             'delivery_distance_km' => $charge['distance_km'],
             'delivery_charge_mode' => $charge['mode'],
             'delivery_charge_label' => $charge['label'] ?? null,
-            'grand_total' => round($itemsTotal + (float) $charge['fee'], 2),
+            'discount_amount' => $discount,
+            'admin_discount_amount' => (float) ($autoCouponResult['admin_discount_amount'] ?? 0),
+            'restaurant_discount_amount' => (float) ($autoCouponResult['restaurant_discount_amount'] ?? 0),
+            'delivery_discount_amount' => (float) ($autoCouponResult['delivery_discount_amount'] ?? 0),
+            'discount_breakdown' => $autoCouponResult['breakdown'] ?? null,
+            'coupon_code' => ($autoCouponResult['coupon'] ?? null)?->code,
+            'auto_coupon_applied' => $autoCouponResult !== null,
+            'auto_coupon_message' => $autoCouponResult['message'] ?? null,
+            'grand_total' => round(max(0, $itemsTotal + (float) $charge['fee'] - $discount), 2),
         ]);
     }
 
@@ -838,7 +982,7 @@ class FoodDeliveryController extends Controller
     public function order(Request $request, int $id): JsonResponse
     {
         $order = FoodOrder::query()
-            ->with('items', 'supportTickets:id,food_order_id,subject,message,status,admin_reply,created_at,updated_at', 'restaurant:id,name,phone,address,opening_hours,lat,lng,cod_enabled,manual_bkash_number,manual_nagad_number,manual_payment_instructions', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
+            ->with('items', 'supportTickets:id,food_order_id,subject,message,status,admin_reply,admin_replied_at,created_at,updated_at', 'restaurant:id,name,phone,address,opening_hours,lat,lng,cod_enabled,manual_bkash_number,manual_nagad_number,manual_payment_instructions', 'rider:id,name,phone,last_lat,last_lng,last_location_at')
             ->where('user_id', $request->user()->id)
             ->findOrFail($id);
         $this->decorateFoodOrder($order);
@@ -927,7 +1071,7 @@ class FoodDeliveryController extends Controller
             'delivery_person_phone' => ['nullable', 'string', 'max:40'],
         ]);
         $order = FoodOrder::query()->with('restaurant')->findOrFail($id);
-        abort_unless((int) $order->restaurant?->user_id === (int) $request->user()->id, 403, 'Not allowed.');
+        abort_unless($order->restaurant?->isAccessibleBy((int) $request->user()->id), 403, 'Not allowed.');
         $order->fill($data);
         $this->fillOrderStatusTimestamp($order, $data['status']);
         $order->save();
@@ -1029,7 +1173,7 @@ class FoodDeliveryController extends Controller
 
     public function ownerReviews(Request $request): JsonResponse
     {
-        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+        $restaurantIds = $this->ownedRestaurantIds($request);
         $reviews = $this->foodReviewQuery()
             ->whereIn('restaurant_id', $restaurantIds)
             ->latest()
@@ -1040,7 +1184,7 @@ class FoodDeliveryController extends Controller
 
     public function ownerCoupons(Request $request): JsonResponse
     {
-        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+        $restaurantIds = $this->ownedRestaurantIds($request);
 
         return response()->json([
             'data' => FoodCoupon::query()
@@ -1081,13 +1225,12 @@ class FoodDeliveryController extends Controller
         $coupon = ! empty($data['id'])
             ? FoodCoupon::query()
                 ->where('restaurant_id', $restaurant->id)
-                ->where('owner_user_id', $request->user()->id)
                 ->findOrFail((int) $data['id'])
             : new FoodCoupon();
 
         $coupon->fill([
             'restaurant_id' => $restaurant->id,
-            'owner_user_id' => $request->user()->id,
+            'owner_user_id' => $coupon->exists ? ($coupon->owner_user_id ?: $request->user()->id) : $request->user()->id,
             'source' => 'restaurant',
             'funding_source' => 'restaurant',
             'applies_to' => ($data['discount_type'] ?? 'fixed') === 'free_delivery' ? 'delivery' : 'order_items',
@@ -1110,7 +1253,7 @@ class FoodDeliveryController extends Controller
 
     public function deleteOwnerCoupon(Request $request, int $id): JsonResponse
     {
-        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+        $restaurantIds = $this->ownedRestaurantIds($request);
         FoodCoupon::query()
             ->whereIn('restaurant_id', $restaurantIds)
             ->where('source', 'restaurant')
@@ -1126,7 +1269,7 @@ class FoodDeliveryController extends Controller
             'owner_reply' => ['required', 'string', 'min:2', 'max:1000'],
         ]);
 
-        $restaurantIds = Restaurant::query()->where('user_id', $request->user()->id)->pluck('id');
+        $restaurantIds = $this->ownedRestaurantIds($request);
         $review = FoodReview::query()->whereIn('restaurant_id', $restaurantIds)->findOrFail($id);
         $review->forceFill([
             'owner_reply' => $data['owner_reply'],
@@ -1150,9 +1293,7 @@ class FoodDeliveryController extends Controller
             ->when($request->filled('min_price'), fn ($q) => $q->where('min_price', '>=', (int) $request->query('min_price')))
             ->when($request->filled('max_price'), fn ($q) => $q->where('max_price', '<=', (int) $request->query('max_price')))
             ->orderByRaw($this->promotionOrderSql().' desc')
-            ->orderByDesc('promotion_priority')
-            ->orderByDesc('rating')
-            ->orderByDesc('id');
+            ->orderByRaw('rand()');
     }
 
     private function availableRestaurantFilter($query): void
@@ -1182,6 +1323,11 @@ class FoodDeliveryController extends Controller
         return "case when is_promoted = 1 and (promotion_starts_at is null or promotion_starts_at <= now()) and (promotion_ends_at is null or promotion_ends_at >= now()) then 1 else 0 end";
     }
 
+    private function normalItemRandomOrderSql(): string
+    {
+        return "case when (is_popular is null or is_popular = 0) and not (is_promoted = 1 and (promotion_starts_at is null or promotion_starts_at <= now()) and (promotion_ends_at is null or promotion_ends_at >= now())) then rand() else 0 end";
+    }
+
     private function foodReviewQuery()
     {
         return FoodReview::query()
@@ -1194,7 +1340,11 @@ class FoodDeliveryController extends Controller
         $restaurant->image_url = MediaLookup::primaryUrlMap('restaurant', [$restaurant->id])[$restaurant->id] ?? null;
         $restaurant->delivery_time = '৩০-৫০ মিনিট';
         $restaurant->minimum_order = $restaurant->min_price ?: null;
-        $restaurant->is_open = true;
+        $restaurant->opening_hours = $restaurant->businessHoursLabel();
+        $restaurant->is_open = $restaurant->isOpenNow();
+        $restaurant->availability_message = $restaurant->is_open
+            ? 'এখন অর্ডার নেওয়া হচ্ছে'
+            : $this->restaurantClosedMessage($restaurant);
         $restaurant->is_currently_promoted = $this->isCurrentlyPromoted($restaurant);
         $restaurant->promotion_label = $restaurant->is_currently_promoted
             ? ($restaurant->promotion_badge ?: 'Featured')
@@ -1211,6 +1361,11 @@ class FoodDeliveryController extends Controller
             : null;
         $restaurant->menu_items_count = FoodItem::query()->where('restaurant_id', $restaurant->id)->count();
         $restaurant->pending_orders_count = FoodOrder::query()->where('restaurant_id', $restaurant->id)->where('status', 'pending')->count();
+        $restaurant->opening_hours = $restaurant->businessHoursLabel();
+        $restaurant->is_open = $restaurant->isOpenNow();
+        $restaurant->availability_message = $restaurant->is_open
+            ? 'এখন অর্ডার নেওয়া হচ্ছে'
+            : $this->restaurantClosedMessage($restaurant);
         $restaurant->is_currently_promoted = $this->isCurrentlyPromoted($restaurant);
         $restaurant->promotion_label = $restaurant->is_currently_promoted
             ? ($restaurant->promotion_badge ?: 'Featured')
@@ -1386,8 +1541,24 @@ class FoodDeliveryController extends Controller
     private function ownedRestaurant(Request $request, int $restaurantId): Restaurant
     {
         return Restaurant::query()
-            ->where('user_id', $request->user()->id)
+            ->accessibleByUser((int) $request->user()->id)
             ->findOrFail($restaurantId);
+    }
+
+    private function ownedRestaurantIds(Request $request)
+    {
+        return Restaurant::query()
+            ->accessibleByUser((int) $request->user()->id)
+            ->pluck('id');
+    }
+
+    private function restaurantClosedMessage(?Restaurant $restaurant): string
+    {
+        $hours = $restaurant?->businessHoursLabel();
+
+        return $hours
+            ? "রেস্টুরেন্টটি এখন বন্ধ। অর্ডারের সময়: {$hours}।"
+            : 'রেস্টুরেন্টটি এখন অর্ডার নিচ্ছে না।';
     }
 
     private function cartPayload(int $userId): array
@@ -1433,9 +1604,29 @@ class FoodDeliveryController extends Controller
                 : $this->deliveryCharge($cart->restaurant, $selectedAddress?->area, $deliveryLat, $deliveryLng, $itemsTotal);
         }
         $deliveryFee = $charge['fee'];
+        $autoCouponResult = null;
+        if ($deliveryFee !== null && $cart->restaurant_id) {
+            $autoCouponResult = $this->autoCouponDiscount(
+                $itemsTotal,
+                (float) $deliveryFee,
+                (int) $cart->restaurant_id,
+                $userId,
+                false,
+            );
+        }
+        $autoDiscount = (float) ($autoCouponResult['discount_amount'] ?? 0);
+        $restaurant = $cart->restaurant;
+        if ($restaurant) {
+            $restaurant->opening_hours = $restaurant->businessHoursLabel();
+            $restaurant->is_open = $restaurant->isOpenNow();
+            $restaurant->availability_message = $restaurant->is_open
+                ? 'এখন অর্ডার নেওয়া হচ্ছে'
+                : $this->restaurantClosedMessage($restaurant);
+        }
+
         return [
             'cart' => $cart,
-            'restaurant' => $cart->restaurant,
+            'restaurant' => $restaurant,
             'payment_options' => $this->restaurantPaymentOptions($cart->restaurant),
             'items' => $items,
             'items_total' => $itemsTotal,
@@ -1443,7 +1634,17 @@ class FoodDeliveryController extends Controller
             'delivery_distance_km' => $charge['distance_km'] ?? null,
             'delivery_charge_mode' => $charge['mode'] ?? null,
             'delivery_charge_label' => $charge['label'] ?? null,
-            'grand_total' => $itemsTotal + (float) ($deliveryFee ?? 0),
+            'discount_amount' => $autoDiscount,
+            'admin_discount_amount' => (float) ($autoCouponResult['admin_discount_amount'] ?? 0),
+            'restaurant_discount_amount' => (float) ($autoCouponResult['restaurant_discount_amount'] ?? 0),
+            'delivery_discount_amount' => (float) ($autoCouponResult['delivery_discount_amount'] ?? 0),
+            'discount_breakdown' => $autoCouponResult['breakdown'] ?? null,
+            'coupon_code' => ($autoCouponResult['coupon'] ?? null)?->code,
+            'auto_coupon_applied' => $autoCouponResult !== null,
+            'auto_coupon_message' => $autoCouponResult['message'] ?? null,
+            'checkout_image_notice_enabled' => (bool) ($settings->checkout_image_notice_enabled ?? true),
+            'checkout_image_notice_text' => $settings->checkout_image_notice_text ?: 'খাবারের ছবিগুলো অনেক ক্ষেত্রে AI/ইলাস্ট্রেশন হিসেবে ব্যবহার করা হয়েছে। রেস্টুরেন্টের প্রস্তুত খাবার ছবির সাথে সামান্য ভিন্ন হতে পারে। অর্ডার নিশ্চিত করলে আপনি বিষয়টি বুঝে সম্মত হচ্ছেন।',
+            'grand_total' => round(max(0, $itemsTotal + (float) ($deliveryFee ?? 0) - $autoDiscount), 2),
         ];
     }
 
@@ -1520,41 +1721,7 @@ class FoodDeliveryController extends Controller
 
     private function deliveryCharge(?Restaurant $restaurant, ?string $area, ?float $lat, ?float $lng, float $itemsTotal): array
     {
-        if (! $restaurant?->delivery_available) {
-            return ['fee' => 0, 'distance_km' => null, 'mode' => 'disabled'];
-        }
-
-        $settings = FoodDeliverySetting::current();
-        if (! $settings->is_enabled) {
-            return ['fee' => 0, 'distance_km' => null, 'mode' => 'disabled'];
-        }
-
-        if ($settings->free_delivery_min_order !== null && $itemsTotal >= (float) $settings->free_delivery_min_order) {
-            return ['fee' => 0, 'distance_km' => null, 'mode' => 'free_delivery'];
-        }
-
-        $originLat = $restaurant->lat !== null ? (float) $restaurant->lat : ($settings->store_lat !== null ? (float) $settings->store_lat : null);
-        $originLng = $restaurant->lng !== null ? (float) $restaurant->lng : ($settings->store_lng !== null ? (float) $settings->store_lng : null);
-        $distanceKm = ($originLat !== null && $originLng !== null && $lat !== null && $lng !== null)
-            ? $this->distanceKm($originLat, $originLng, $lat, $lng)
-            : null;
-
-        if ($distanceKm !== null && $settings->max_delivery_distance_km !== null && $distanceKm > (float) $settings->max_delivery_distance_km) {
-            abort(422, 'Delivery location is outside the service area.');
-        }
-
-        if ($settings->municipality_rule_enabled && $lat !== null && $lng !== null) {
-            return $this->municipalityDeliveryCharge($settings, $lat, $lng, $distanceKm);
-        }
-
-        if ($settings->charge_mode === 'fixed') {
-            return ['fee' => round((float) $settings->fixed_charge, 2), 'distance_km' => null, 'mode' => 'fixed'];
-        }
-
-        $fee = (float) $settings->base_charge + (($distanceKm ?? 0) * (float) $settings->per_km_charge);
-        $fee = max((float) $settings->minimum_charge, $fee);
-
-        return ['fee' => round($fee, 2), 'distance_km' => $distanceKm === null ? null : round($distanceKm, 2), 'mode' => 'per_km'];
+        return app(FoodDeliveryChargeCalculator::class)->calculate($restaurant, $lat, $lng, $itemsTotal);
     }
 
     private function restaurantCommission(?Restaurant $restaurant, float $itemsTotal, float $extraRestaurantDeduction = 0): array
@@ -1595,6 +1762,20 @@ class FoodDeliveryController extends Controller
         }
 
         $outsideKm = $this->municipalityOutsideDistanceKm($settings, $lat, $lng, $distanceKm);
+        $longDistanceEnabled = (bool) ($settings->municipality_long_distance_enabled ?? false);
+        $longDistanceThresholdKm = (float) ($settings->municipality_long_distance_threshold_km ?? 8);
+        $longDistanceRate = (float) ($settings->municipality_long_distance_per_km_charge ?? 15);
+        $chargeableKm = max(0, (float) ($distanceKm ?? $outsideKm));
+
+        if ($longDistanceEnabled && $chargeableKm > $longDistanceThresholdKm) {
+            return [
+                'fee' => round($chargeableKm * $longDistanceRate, 2),
+                'distance_km' => $distanceKm === null ? null : round($distanceKm, 2),
+                'mode' => 'municipality_outside_long_distance',
+                'label' => 'Outside pourashava long distance per KM',
+            ];
+        }
+
         return [
             'fee' => round($fixed + ($outsideKm * $extraRate), 2),
             'distance_km' => $distanceKm === null ? null : round($distanceKm, 2),
@@ -1724,6 +1905,14 @@ class FoodDeliveryController extends Controller
             return array_replace($empty, ['coupon' => $coupon, 'message' => 'এই coupon এর limit শেষ।']);
         }
 
+        $firstOrderOnly = $this->isFirstOrderCoupon($coupon);
+        if ($firstOrderOnly && ! $this->userCanUseFirstOrderCoupon($userId)) {
+            return array_replace($empty, [
+                'coupon' => $coupon,
+                'message' => 'এই coupon শুধুমাত্র প্রথম food order এর জন্য প্রযোজ্য।',
+            ]);
+        }
+
         if ($coupon->per_user_limit !== null) {
             $usedByUser = FoodCouponRedemption::query()
                 ->where('food_coupon_id', $coupon->id)
@@ -1782,6 +1971,7 @@ class FoodDeliveryController extends Controller
                 'minimum_order' => (float) $coupon->minimum_order,
                 'applies_to' => $appliesTo,
                 'funding_source' => $fundingSource,
+                'first_order_only' => $firstOrderOnly,
                 'basis_amount' => round($basis, 2),
                 'item_discount_amount' => $itemDiscount,
                 'delivery_discount_amount' => round($deliveryDiscount, 2),
@@ -1789,6 +1979,79 @@ class FoodDeliveryController extends Controller
                 'restaurant_discount_amount' => round($restaurantDiscount, 2),
             ],
         ];
+    }
+
+    private function autoCouponDiscount(float $itemsTotal, float $deliveryFee, int $restaurantId, int $userId, bool $forCheckout): ?array
+    {
+        $coupons = FoodCoupon::query()
+            ->where('is_active', true)
+            ->where(function ($query) use ($restaurantId): void {
+                $query->whereNull('restaurant_id')->orWhere('restaurant_id', $restaurantId);
+            })
+            ->where(function ($query): void {
+                $query->whereNull('starts_at')->orWhere('starts_at', '<=', now());
+            })
+            ->where(function ($query): void {
+                $query->whereNull('ends_at')->orWhere('ends_at', '>=', now());
+            })
+            ->orderByRaw('restaurant_id is null')
+            ->latest('id')
+            ->get()
+            ->filter(fn (FoodCoupon $coupon): bool => (bool) $coupon->auto_apply || $this->isFirstOrderCoupon($coupon));
+
+        $best = null;
+        foreach ($coupons as $coupon) {
+            $result = $this->couponDiscount($coupon->code, $itemsTotal, $deliveryFee, $restaurantId, $userId, $forCheckout);
+            if (! $result['valid']) {
+                continue;
+            }
+            if ($best === null || (float) $result['discount_amount'] > (float) $best['discount_amount']) {
+                $best = $result;
+            }
+        }
+
+        if ($best === null) {
+            return null;
+        }
+
+        $firstOrderOnly = $this->isFirstOrderCoupon($best['coupon']);
+        $best['message'] = $firstOrderOnly
+            ? ($forCheckout ? 'First order discount applied.' : 'আপনার প্রথম অর্ডারে ছাড় প্রযোজ্য হয়েছে।')
+            : ($forCheckout ? 'Automatic discount applied.' : 'অফারের ছাড় স্বয়ংক্রিয়ভাবে প্রযোজ্য হয়েছে।');
+        $best['breakdown'] = array_replace($best['breakdown'] ?? [], [
+            'auto_applied' => true,
+            'first_order_only' => $firstOrderOnly,
+        ]);
+
+        return $best;
+    }
+
+    private function isFirstOrderCoupon(FoodCoupon $coupon): bool
+    {
+        $haystack = Str::lower(implode(' ', array_filter([
+            $coupon->code,
+            $coupon->title,
+            $coupon->notes,
+        ])));
+
+        return Str::contains($haystack, [
+            'first',
+            'firstorder',
+            'first-order',
+            'newuser',
+            'new-user',
+            'welcome',
+            'প্রথম',
+            'নতুন',
+        ]);
+    }
+
+    private function userCanUseFirstOrderCoupon(int $userId): bool
+    {
+        return ! FoodOrder::query()
+            ->where('user_id', $userId)
+            ->whereNotIn('status', ['cancelled', 'rejected'])
+            ->exists();
     }
 
     private function statusLabels(): array
@@ -1876,21 +2139,23 @@ class FoodDeliveryController extends Controller
 
     private function notifyRestaurantOwner(FoodOrder $order): void
     {
-        $ownerId = $order->restaurant?->user_id;
-        if (! $ownerId) return;
+        $operatorIds = $order->restaurant?->operatorUserIds() ?? collect();
+        if ($operatorIds->isEmpty()) return;
 
         $restaurantName = $order->restaurant?->name ?: 'আপনার রেস্টুরেন্ট';
         $title = 'নতুন খাবারের অর্ডার এসেছে';
         $message = "{$restaurantName}-এ {$order->order_no} অর্ডার এসেছে। মোট বিল ৳{$order->grand_total}।";
-        $this->notifyUser((object) ['user_id' => $ownerId, 'id' => $order->id], $title, $message, [
-            'type' => 'food_order',
-            'role' => 'restaurant_owner',
-            'event' => 'new_order',
-            'order_id' => $order->id,
-            'order_no' => $order->order_no,
-            'restaurant_id' => $order->restaurant_id,
-            'screen' => 'food_owner_orders',
-        ]);
+        foreach ($operatorIds as $operatorId) {
+            $this->notifyUser((object) ['user_id' => $operatorId, 'id' => $order->id], $title, $message, [
+                'type' => 'food_order',
+                'role' => 'restaurant_owner',
+                'event' => 'new_order',
+                'order_id' => $order->id,
+                'order_no' => $order->order_no,
+                'restaurant_id' => $order->restaurant_id,
+                'screen' => 'food_owner_orders',
+            ]);
+        }
     }
 
     private function notifyFoodOrderCustomer(FoodOrder $order): void

@@ -705,6 +705,11 @@ class RiderController extends Controller
         $riderFixed = (float) ($settings->rider_fixed_earning ?? $fixedCharge);
         $riderPerKm = (float) ($settings->rider_per_km_earning ?? $perKmCharge);
 
+        if ($mode === 'municipality_outside_long_distance') {
+            $distanceKm = max(0, (float) ($order->delivery_distance_km ?? 0));
+            return round(min($deliveryFee, $distanceKm * $riderPerKm), 2);
+        }
+
         if (str_contains($mode, 'outside_per_km')) {
             $variableFee = max(0, $deliveryFee - $fixedCharge);
             $outsideKm = $perKmCharge > 0 ? $variableFee / $perKmCharge : 0;

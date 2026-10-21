@@ -490,10 +490,8 @@ class ReviewController extends Controller
             'comment' => ['nullable', 'string'],
         ]);
 
-        $ownerId = Restaurant::query()
-            ->where('id', $validated['target_id'])
-            ->value('user_id');
-        if ($ownerId && $ownerId === $request->user()->id) {
+        $restaurant = Restaurant::query()->findOrFail((int) $validated['target_id']);
+        if ($restaurant->isAccessibleBy((int) $request->user()->id)) {
             return response()->json(['message' => 'নিজের রেস্টুরেন্টে রেটিং দেওয়া যাবে না'], 403);
         }
 

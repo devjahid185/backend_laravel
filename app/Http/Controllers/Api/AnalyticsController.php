@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AnalyticsEvent;
+use App\Models\AiNotificationDecision;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -47,18 +48,52 @@ class AnalyticsController extends Controller
                 : now(),
         ]);
 
+        $decisionId = (int) data_get($data, 'parameters.ai_decision_id', 0);
+        if ($decisionId > 0 && $userId) {
+            $decision = AiNotificationDecision::query()
+                ->whereKey($decisionId)
+                ->where('user_id', $userId)
+                ->first();
+            if ($decision && $data['event_name'] === 'notification_open') {
+                $decision->update(['opened_at' => $decision->opened_at ?: now()]);
+            }
+        }
+
+        if ($userId && $data['event_name'] === 'purchase') {
+            AiNotificationDecision::query()
+                ->where('user_id', $userId)
+                ->where('status', 'sent')
+                ->whereNull('converted_at')
+                ->where('sent_at', '>=', now()->subHours(24))
+                ->latest('sent_at')
+                ->limit(1)
+                ->update(['converted_at' => now()]);
+        }
+
         return response()->json(['message' => 'Event logged']);
     }
 
     public function overview(Request $request): JsonResponse
     {
-        $hours = min(168, max(1, (int) $request->query('hours', 24)));
-        $since = now()->subHours($hours);
+        $data = $request->validate([
+            'hours' => ['nullable', 'integer', 'min:1', 'max:168'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+        ]);
+
+        $hours = min(168, max(1, (int) ($data['hours'] ?? 24)));
+        $hasDateRange = ! empty($data['date_from']) || ! empty($data['date_to']);
+        $rangeStart = $hasDateRange && ! empty($data['date_from'])
+            ? Carbon::parse($data['date_from'])->startOfDay()
+            : now()->subHours($hours);
+        $rangeEnd = $hasDateRange && ! empty($data['date_to'])
+            ? Carbon::parse($data['date_to'])->endOfDay()
+            : now();
         $today = now()->startOfDay();
         $week = now()->subDays(7);
 
         $base = AnalyticsEvent::query();
-        $window = (clone $base)->where('occurred_at', '>=', $since);
+        $window = (clone $base)->whereBetween('occurred_at', [$rangeStart, $rangeEnd]);
 
         $topEvents = (clone $window)
             ->select('event_name', DB::raw('count(*) as total'))
@@ -75,13 +110,14 @@ class AnalyticsController extends Controller
             ->limit(12)
             ->get();
 
-        $hourly = (clone $window)
-            ->selectRaw("DATE_FORMAT(occurred_at, '%Y-%m-%d %H:00:00') as bucket, count(*) as events, count(distinct session_id) as sessions, count(distinct user_id) as users")
+        $trendFormat = $hasDateRange ? '%Y-%m-%d' : '%Y-%m-%d %H:00:00';
+        $trend = (clone $window)
+            ->selectRaw("DATE_FORMAT(occurred_at, ?) as bucket, count(*) as events, count(distinct session_id) as sessions, count(distinct user_id) as users", [$trendFormat])
             ->groupBy('bucket')
             ->orderBy('bucket')
             ->get();
 
-        $recent = AnalyticsEvent::query()
+        $recent = (clone $window)
             ->with('user:id,name,phone,email')
             ->latest('occurred_at')
             ->limit(30)
@@ -94,10 +130,13 @@ class AnalyticsController extends Controller
                 'active_users_window' => (clone $window)->whereNotNull('user_id')->distinct('user_id')->count('user_id'),
                 'events_today' => (clone $base)->where('occurred_at', '>=', $today)->count(),
                 'events_week' => (clone $base)->where('occurred_at', '>=', $week)->count(),
+                'range_start' => $rangeStart->toDateTimeString(),
+                'range_end' => $rangeEnd->toDateTimeString(),
+                'range_mode' => $hasDateRange ? 'date' : 'hours',
             ],
             'top_events' => $topEvents,
             'top_screens' => $topScreens,
-            'hourly' => $hourly,
+            'hourly' => $trend,
             'recent' => $recent,
         ]);
     }

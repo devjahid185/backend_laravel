@@ -13,6 +13,9 @@ class FoodDeliverySetting extends Model
         'municipality_fixed_charge',
         'rider_fixed_earning',
         'municipality_extra_per_km_charge',
+        'municipality_long_distance_enabled',
+        'municipality_long_distance_threshold_km',
+        'municipality_long_distance_per_km_charge',
         'rider_per_km_earning',
         'municipality_center_lat',
         'municipality_center_lng',
@@ -26,6 +29,14 @@ class FoodDeliverySetting extends Model
         'max_delivery_distance_km',
         'store_lat',
         'store_lng',
+        'checkout_image_notice_enabled',
+        'checkout_image_notice_text',
+        'messenger_enabled',
+        'messenger_url',
+        'user_manual_video_enabled',
+        'user_manual_video_path',
+        'user_manual_video_title',
+        'user_manual_video_description',
         'note',
     ];
 
@@ -37,6 +48,9 @@ class FoodDeliverySetting extends Model
             'municipality_fixed_charge' => 'decimal:2',
             'rider_fixed_earning' => 'decimal:2',
             'municipality_extra_per_km_charge' => 'decimal:2',
+            'municipality_long_distance_enabled' => 'boolean',
+            'municipality_long_distance_threshold_km' => 'decimal:2',
+            'municipality_long_distance_per_km_charge' => 'decimal:2',
             'rider_per_km_earning' => 'decimal:2',
             'municipality_center_lat' => 'decimal:7',
             'municipality_center_lng' => 'decimal:7',
@@ -50,6 +64,9 @@ class FoodDeliverySetting extends Model
             'max_delivery_distance_km' => 'decimal:2',
             'store_lat' => 'decimal:7',
             'store_lng' => 'decimal:7',
+            'checkout_image_notice_enabled' => 'boolean',
+            'messenger_enabled' => 'boolean',
+            'user_manual_video_enabled' => 'boolean',
         ];
     }
 
@@ -64,6 +81,9 @@ class FoodDeliverySetting extends Model
                 'municipality_fixed_charge' => 50,
                 'rider_fixed_earning' => 50,
                 'municipality_extra_per_km_charge' => 15,
+                'municipality_long_distance_enabled' => false,
+                'municipality_long_distance_threshold_km' => 8,
+                'municipality_long_distance_per_km_charge' => 15,
                 'rider_per_km_earning' => 15,
                 'municipality_center_lat' => 22.686,
                 'municipality_center_lng' => 90.644,
@@ -99,6 +119,14 @@ class FoodDeliverySetting extends Model
                 'base_charge' => 0,
                 'per_km_charge' => 15,
                 'minimum_charge' => 30,
+                'checkout_image_notice_enabled' => true,
+                'checkout_image_notice_text' => 'খাবারের ছবিগুলো অনেক ক্ষেত্রে AI/ইলাস্ট্রেশন হিসেবে ব্যবহার করা হয়েছে। রেস্টুরেন্টের প্রস্তুত খাবার ছবির সাথে সামান্য ভিন্ন হতে পারে। অর্ডার নিশ্চিত করলে আপনি বিষয়টি বুঝে সম্মত হচ্ছেন।',
+                'messenger_enabled' => false,
+                'messenger_url' => null,
+                'user_manual_video_enabled' => false,
+                'user_manual_video_path' => null,
+                'user_manual_video_title' => 'কীভাবে খাবার অর্ডার করবেন',
+                'user_manual_video_description' => 'ভোলাবাসী অ্যাপে খুব সহজে খাবার অর্ডার করার পুরো নিয়ম এই ভিডিওতে দেখুন।',
             ]
         );
     }

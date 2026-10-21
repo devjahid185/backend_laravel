@@ -3,14 +3,14 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendAdminNotification;
 use App\Models\Admin;
 use App\Models\AppNotification;
 use App\Models\DeviceToken;
 use App\Models\User;
-use App\Services\FcmService;
+use App\Services\NotificationImageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class AdminNotificationController extends Controller
@@ -34,7 +34,7 @@ class AdminNotificationController extends Controller
         return response()->json($notifications);
     }
 
-    public function send(Request $request, FcmService $fcm): JsonResponse
+    public function send(Request $request, NotificationImageService $images): JsonResponse
     {
         $validated = $request->validate([
             'target' => ['required', 'in:all,user'],
@@ -56,7 +56,7 @@ class AdminNotificationController extends Controller
 
         $imageUrl = null;
         if ($request->hasFile('image')) {
-            $path = $request->file('image')->store('notifications/' . now()->format('Y/m'), 'public');
+            $path = $images->store($request->file('image'));
             $baseUrl = $this->notificationPublicBaseUrl($request);
             $imageUrl = $baseUrl ? $baseUrl . '/storage/' . $path : asset('storage/' . $path);
         }
@@ -100,41 +100,12 @@ class AdminNotificationController extends Controller
             ->pluck('token')
             ->all();
 
-        $results = [];
         if (! $tokens) {
             return response()->json([
                 'message' => 'No device tokens found for the selected users.',
                 'sent_to' => 0,
                 'tokens' => 0,
             ], 200);
-        }
-
-        try {
-            $results = $fcm->sendToTokens($tokens, $notificationPayload);
-            \Log::info('Admin notification FCM results', [
-                'tokens' => count($tokens),
-                'results' => $results,
-            ]);
-            $successCount = collect($results)->filter(fn ($result) => ($result['status'] ?? 0) >= 200 && ($result['status'] ?? 0) < 300)->count();
-            $failureCount = count($results) - $successCount;
-            if ($successCount === 0) {
-                return response()->json([
-                    'message' => 'Notification send failed.',
-                    'sent_to' => 0,
-                    'tokens' => count($tokens),
-                    'success_count' => 0,
-                    'failure_count' => $failureCount,
-                    'results' => $results,
-                ], 502);
-            }
-        } catch (\Throwable $e) {
-            \Log::error('Admin notification send failed', [
-                'error' => $e->getMessage(),
-            ]);
-            return response()->json([
-                'message' => 'Notification send failed.',
-                'error' => $e->getMessage(),
-            ], 500);
         }
 
         $records = [];
@@ -156,14 +127,14 @@ class AdminNotificationController extends Controller
             AppNotification::query()->insert($records);
         }
 
+        SendAdminNotification::dispatch(array_values(array_unique($tokens)), $notificationPayload);
+
         return response()->json([
-            'message' => 'Notification sent.',
+            'message' => 'Notification queued for delivery.',
             'sent_to' => $users->count(),
-            'tokens' => count($tokens),
-            'success_count' => $successCount ?? count($results),
-            'failure_count' => $failureCount ?? 0,
-            'results' => $results,
-        ]);
+            'tokens' => count(array_unique($tokens)),
+            'status' => 'queued',
+        ], 202);
     }
 
     private function notificationPublicBaseUrl(Request $request): string
