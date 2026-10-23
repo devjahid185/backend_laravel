@@ -1056,11 +1056,29 @@ class FoodDeliveryController extends Controller
 
     public function cancelOrder(Request $request, int $id): JsonResponse
     {
-        $order = FoodOrder::query()->where('user_id', $request->user()->id)->findOrFail($id);
-        abort_unless(in_array($order->status, ['pending', 'accepted'], true), 422, 'This order cannot be cancelled now.');
-        $this->fillOrderStatusTimestamp($order, 'cancelled');
-        $order->update(['status' => 'cancelled']);
-        return response()->json(['message' => 'Order cancelled', 'order' => $this->decorateFoodOrder($order->fresh())]);
+        $order = DB::transaction(function () use ($request, $id): FoodOrder {
+            $order = FoodOrder::query()
+                ->where('user_id', $request->user()->id)
+                ->lockForUpdate()
+                ->findOrFail($id);
+
+            abort_unless(
+                $order->status === 'pending',
+                422,
+                'রেস্টুরেন্ট অর্ডারটি গ্রহণ করায় এখন আর বাতিল করা যাবে না।',
+            );
+
+            $this->fillOrderStatusTimestamp($order, 'cancelled');
+            $order->status = 'cancelled';
+            $order->save();
+
+            return $order;
+        });
+
+        return response()->json([
+            'message' => 'অর্ডারটি বাতিল করা হয়েছে।',
+            'order' => $this->decorateFoodOrder($order->fresh()),
+        ]);
     }
 
     public function updateOrderStatus(Request $request, int $id): JsonResponse
@@ -1070,11 +1088,16 @@ class FoodDeliveryController extends Controller
             'delivery_person_name' => ['nullable', 'string', 'max:120'],
             'delivery_person_phone' => ['nullable', 'string', 'max:40'],
         ]);
-        $order = FoodOrder::query()->with('restaurant')->findOrFail($id);
-        abort_unless($order->restaurant?->isAccessibleBy((int) $request->user()->id), 403, 'Not allowed.');
-        $order->fill($data);
-        $this->fillOrderStatusTimestamp($order, $data['status']);
-        $order->save();
+        $order = DB::transaction(function () use ($request, $id, $data): FoodOrder {
+            $order = FoodOrder::query()->with('restaurant')->lockForUpdate()->findOrFail($id);
+            abort_unless($order->restaurant?->isAccessibleBy((int) $request->user()->id), 403, 'Not allowed.');
+            abort_if($order->status === 'cancelled', 422, 'Customer has already cancelled this order.');
+            $order->fill($data);
+            $this->fillOrderStatusTimestamp($order, $data['status']);
+            $order->save();
+
+            return $order;
+        });
         $riderDispatch = null;
         if (in_array($data['status'], ['accepted', 'preparing'], true)) {
             $riderDispatch = $this->dispatchOrderToNearbyRiders($order->fresh('restaurant'));
@@ -2071,6 +2094,7 @@ class FoodDeliveryController extends Controller
     private function decorateFoodOrder(FoodOrder $order): FoodOrder
     {
         $this->decoratePaymentProof($order);
+        $order->can_cancel = $order->status === 'pending';
         $order->status_timeline = $this->orderStatusTimeline($order);
 
         return $order;
