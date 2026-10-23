@@ -7,6 +7,10 @@ use App\Models\Restaurant;
 
 class FoodDeliveryChargeCalculator
 {
+    public function __construct(private readonly GoogleRoutesDistanceService $googleRoutes)
+    {
+    }
+
     public function calculate(?Restaurant $restaurant, ?float $lat, ?float $lng, float $itemsTotal): array
     {
         if (! $restaurant?->delivery_available) {
@@ -72,9 +76,12 @@ class FoodDeliveryChargeCalculator
         $originLat = $restaurant?->lat !== null ? (float) $restaurant->lat : ($settings->store_lat !== null ? (float) $settings->store_lat : null);
         $originLng = $restaurant?->lng !== null ? (float) $restaurant->lng : ($settings->store_lng !== null ? (float) $settings->store_lng : null);
 
-        return $originLat !== null && $originLng !== null && $lat !== null && $lng !== null
-            ? $this->distanceKm($originLat, $originLng, $lat, $lng)
-            : null;
+        if ($originLat === null || $originLng === null || $lat === null || $lng === null) {
+            return null;
+        }
+
+        return $this->googleRoutes->distanceKm($originLat, $originLng, $lat, $lng)
+            ?? $this->distanceKm($originLat, $originLng, $lat, $lng);
     }
 
     private function municipalityCharge(FoodDeliverySetting $settings, float $lat, float $lng, ?float $distanceKm): array

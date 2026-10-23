@@ -48,6 +48,13 @@ return [
         'client_ids' => env('GOOGLE_CLIENT_IDS'),
     ],
 
+    'google_routes' => [
+        'api_key' => env('GOOGLE_ROUTES_API_KEY'),
+        'connect_timeout_seconds' => env('GOOGLE_ROUTES_CONNECT_TIMEOUT_SECONDS', 2),
+        'timeout_seconds' => env('GOOGLE_ROUTES_TIMEOUT_SECONDS', 4),
+        'cache_hours' => env('GOOGLE_ROUTES_CACHE_HOURS', 24),
+    ],
+
     'fcm' => [
         'service_account_path' => env('FCM_SERVICE_ACCOUNT_PATH'),
         'project_id' => env('FCM_PROJECT_ID'),
