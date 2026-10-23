@@ -7,7 +7,10 @@ use App\Models\Restaurant;
 
 class FoodDeliveryChargeCalculator
 {
-    public function __construct(private readonly GoogleRoutesDistanceService $googleRoutes)
+    public function __construct(
+        private readonly OsrmDistanceService $osrm,
+        private readonly GoogleRoutesDistanceService $googleRoutes,
+    )
     {
     }
 
@@ -80,7 +83,8 @@ class FoodDeliveryChargeCalculator
             return null;
         }
 
-        return $this->googleRoutes->distanceKm($originLat, $originLng, $lat, $lng)
+        return $this->osrm->distanceKm($originLat, $originLng, $lat, $lng)
+            ?? $this->googleRoutes->distanceKm($originLat, $originLng, $lat, $lng)
             ?? $this->distanceKm($originLat, $originLng, $lat, $lng);
     }
 

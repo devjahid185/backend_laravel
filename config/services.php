@@ -55,6 +55,16 @@ return [
         'cache_hours' => env('GOOGLE_ROUTES_CACHE_HOURS', 24),
     ],
 
+    'osrm' => [
+        'enabled' => env('OSRM_ENABLED', false),
+        'base_url' => env('OSRM_BASE_URL', 'http://127.0.0.1:5000'),
+        'coverage_bbox' => env('OSRM_COVERAGE_BBOX'),
+        'connect_timeout_seconds' => env('OSRM_CONNECT_TIMEOUT_SECONDS', 1),
+        'timeout_seconds' => env('OSRM_TIMEOUT_SECONDS', 3),
+        'cache_hours' => env('OSRM_CACHE_HOURS', 24),
+        'failure_cache_seconds' => env('OSRM_FAILURE_CACHE_SECONDS', 120),
+    ],
+
     'fcm' => [
         'service_account_path' => env('FCM_SERVICE_ACCOUNT_PATH'),
         'project_id' => env('FCM_PROJECT_ID'),

@@ -66,14 +66,14 @@ class GoogleRoutesDistanceService
             }
 
             Cache::put($failureKey, true, now()->addMinutes(5));
-            Log::warning('Google Routes distance request failed; using straight-line fallback.', [
+            Log::warning('Google Routes distance request failed; using the next distance provider.', [
                 'status' => $response->status(),
                 'error_status' => $response->json('error.status'),
                 'error_message' => $response->json('error.message'),
             ]);
         } catch (Throwable $exception) {
             Cache::put($failureKey, true, now()->addMinutes(5));
-            Log::warning('Google Routes distance request failed; using straight-line fallback.', [
+            Log::warning('Google Routes distance request failed; using the next distance provider.', [
                 'exception' => $exception->getMessage(),
             ]);
         }
