@@ -20,6 +20,7 @@ class OsrmDistanceServiceTest extends TestCase
             'services.osrm.coverage_bbox' => '90.45,21.65,91.20,22.95',
             'services.osrm.connect_timeout_seconds' => 1,
             'services.osrm.timeout_seconds' => 1,
+            'services.osrm.cache_version' => 'test-v1',
             'services.osrm.cache_hours' => 24,
             'services.osrm.failure_cache_seconds' => 120,
         ]);

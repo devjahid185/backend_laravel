@@ -83,8 +83,8 @@ class FoodDeliveryChargeCalculator
             return null;
         }
 
-        return $this->osrm->distanceKm($originLat, $originLng, $lat, $lng)
-            ?? $this->googleRoutes->distanceKm($originLat, $originLng, $lat, $lng)
+        return $this->googleRoutes->distanceKm($originLat, $originLng, $lat, $lng)
+            ?? $this->osrm->distanceKm($originLat, $originLng, $lat, $lng)
             ?? $this->distanceKm($originLat, $originLng, $lat, $lng);
     }
 

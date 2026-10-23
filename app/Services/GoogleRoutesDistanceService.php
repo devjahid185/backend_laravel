@@ -36,6 +36,7 @@ class GoogleRoutesDistanceService
         try {
             $response = Http::acceptJson()
                 ->asJson()
+                ->withOptions(['force_ip_resolve' => 'v4'])
                 ->withHeaders([
                     'X-Goog-Api-Key' => $apiKey,
                     'X-Goog-FieldMask' => 'routes.distanceMeters',

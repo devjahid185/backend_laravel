@@ -30,8 +30,9 @@ class OsrmDistanceService
             $this->coordinate($toLat),
         ]);
         $routeKey = sha1($coordinates);
-        $cacheKey = "osrm:distance:{$routeKey}";
-        $failureKey = "osrm:failure:{$routeKey}";
+        $cacheVersion = trim((string) config('services.osrm.cache_version', '1')) ?: '1';
+        $cacheKey = "osrm:{$cacheVersion}:distance:{$routeKey}";
+        $failureKey = "osrm:{$cacheVersion}:failure:{$routeKey}";
         $cached = Cache::get($cacheKey);
 
         if (is_numeric($cached)) {

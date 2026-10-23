@@ -61,6 +61,7 @@ return [
         'coverage_bbox' => env('OSRM_COVERAGE_BBOX'),
         'connect_timeout_seconds' => env('OSRM_CONNECT_TIMEOUT_SECONDS', 1),
         'timeout_seconds' => env('OSRM_TIMEOUT_SECONDS', 3),
+        'cache_version' => env('OSRM_CACHE_VERSION', '1'),
         'cache_hours' => env('OSRM_CACHE_HOURS', 24),
         'failure_cache_seconds' => env('OSRM_FAILURE_CACHE_SECONDS', 120),
     ],
